@@ -1,0 +1,13 @@
+# Minimal laptop profile. Full capstone dependencies remain in requirements.txt.
+fastapi==0.115.12
+uvicorn==0.34.2
+pydantic==2.11.7
+httpx==0.28.1
+PyYAML==6.0.2
+langgraph==0.6.11
+python-docx==1.2.0
+Pillow==11.3.0
+pytesseract==0.3.13
+PyMuPDF==1.26.5
+python-multipart==0.0.20
+langfuse==4.7.0

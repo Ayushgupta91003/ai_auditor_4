@@ -1,0 +1,25 @@
+{
+  "synthetic": true,
+  "not_live_execution_results": true,
+  "english": {
+    "recommendation": "approve",
+    "total": "1210.00",
+    "currency": "EUR"
+  },
+  "spanish": {
+    "recommendation": "review",
+    "field": "unit_price",
+    "line_number": 1,
+    "actual": "120",
+    "expected": "100",
+    "deviation_percent": "20"
+  },
+  "german": {
+    "recommendation": "review",
+    "field": "quantity",
+    "line_number": 1,
+    "actual": "12",
+    "expected": "10",
+    "deviation_percent": "20"
+  }
+}

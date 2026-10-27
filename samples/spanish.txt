@@ -1,0 +1,14 @@
+FACTURA SINTETICA DE PRUEBA
+Numero de factura: INV-SPANISH-001
+Fecha: 2026-10-01
+Proveedor: Global Logistics Supplies
+ID de proveedor: V001
+Orden de compra: PO-1001
+Moneda: EUR
+Codigo | Descripcion | Cantidad | Precio unitario | Importe
+BOX-01 | Boxes | 10 | 120.00 | 1200.00
+PAL-01 | Pallets | 2 | 50.00 | 100.00
+Subtotal: 1300.00
+Tipo de impuesto: 10%
+Impuesto: 130.00
+Total: 1430.00

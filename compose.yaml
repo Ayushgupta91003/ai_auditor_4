@@ -1,0 +1,109 @@
+name: ai-invoice-auditor
+services:
+  postgres:
+    image: postgres:16.6
+    env_file: .env
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [auditor]
+  qdrant:
+    image: qdrant/qdrant:v1.15.1
+    ports: ["6333:6333"]
+    volumes: ["qdrant-data:/qdrant/storage"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf "GET /readyz HTTP/1.0\r\n\r\n" >&3; read -r line <&3; [[ $$line == *200* ]]'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [auditor]
+  redis:
+    image: redis:7.4.2
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [auditor]
+  mock-erp:
+    image: invoice-mock-erp:1.0
+    build:
+      context: .
+      dockerfile: mock_erp/Dockerfile
+    env_file: .env
+    ports: ["8001:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [auditor]
+  agent:
+    image: invoice-agent:1.0
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    env_file: .env
+    environment:
+      ERP_URL: http://mock-erp:8000
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      A2A_URL: http://agent:8000/reporting
+      INCOMING_DIR: /app/data/incoming
+      REPORTS_DIR: /app/data/reports
+    volumes: ["./data/incoming:/app/data/incoming", "./data/reports:/app/data/reports"]
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mock-erp: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+    networks: [auditor]
+  streamlit-ui:
+    image: invoice-ui:1.0
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    env_file: .env
+    environment:
+      AGENT_URL: http://agent:8000
+    ports: ["8501:8501"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      agent: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [auditor]
+networks:
+  auditor: {driver: bridge}
+volumes:
+  postgres-data:
+  qdrant-data:

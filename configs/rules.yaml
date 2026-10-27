@@ -1,0 +1,12 @@
+version: "1.0"
+required_fields: [invoice_number, invoice_date, vendor_name, vendor_id, po_number, currency, total_amount]
+required_line_fields: [item_code, quantity, unit_price, line_total]
+price_tolerance_percent: "1.0"
+quantity_tolerance_percent: "0.0"
+amount_tolerance: "0.02"
+translation_review_threshold: 0.75
+max_upload_mb: 15
+rag_threshold: 0.7
+rag_max_retries: 3
+tax_policy: "Fixture tax rates are explicit invoice fields; no jurisdictional tax advice."
+reject_deviation_percent: "25.0"

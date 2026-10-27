@@ -1,0 +1,14 @@
+SYNTHETISCHE TESTRECHNUNG
+Rechnungsnummer: INV-GERMAN-001
+Datum: 2026-10-01
+Lieferant: Global Logistics Supplies
+Lieferanten-ID: V001
+Bestellnummer: PO-1001
+Waehrung: EUR
+Artikelcode | Beschreibung | Menge | Einzelpreis | Gesamt
+BOX-01 | Boxes | 12 | 100.00 | 1200.00
+PAL-01 | Pallets | 2 | 50.00 | 100.00
+Zwischensumme: 1300.00
+Steuersatz: 10%
+Steuerbetrag: 130.00
+Gesamtbetrag: 1430.00

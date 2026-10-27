@@ -1,0 +1,14 @@
+SYNTHETIC TEST INVOICE
+Invoice number: INV-ENGLISH-001
+Date: 2026-10-01
+Vendor: Global Logistics Supplies
+Vendor ID: V001
+Purchase order: PO-1001
+Currency: EUR
+Item code | Description | Quantity | Unit price | Line total
+BOX-01 | Boxes | 10 | 100.00 | 1000.00
+PAL-01 | Pallets | 2 | 50.00 | 100.00
+Subtotal: 1100.00
+Tax rate: 10%
+Tax amount: 110.00
+Total: 1210.00
