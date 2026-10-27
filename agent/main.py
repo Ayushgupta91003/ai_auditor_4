@@ -77,6 +77,7 @@ async def upload(file:UploadFile=File(...)):
     suffix=Path(file.filename or "").suffix.lower()
     if suffix not in (".pdf",".docx",".png"): raise HTTPException(400,"Supported: PDF, DOCX, PNG")
     data=await file.read(rules()["max_upload_mb"]*1024*1024+1)
+    if not data: raise HTTPException(400,"File is empty")
     if len(data)>rules()["max_upload_mb"]*1024*1024: raise HTTPException(413,"File too large")
     settings.incoming.mkdir(parents=True,exist_ok=True)
     path=settings.incoming/(str(uuid4())+suffix)

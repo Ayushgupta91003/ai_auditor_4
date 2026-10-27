@@ -1,0 +1,22 @@
+{
+  "project": "invoice-auditor-test-86e395bb43",
+  "passed": true,
+  "phases": [
+    {
+      "phase": "seed",
+      "passed": true,
+      "test_data_only": true
+    },
+    {
+      "phase": "retained",
+      "passed": true,
+      "test_data_only": true
+    },
+    {
+      "phase": "empty",
+      "passed": true,
+      "test_data_only": true
+    }
+  ],
+  "live_llm_used": false
+}

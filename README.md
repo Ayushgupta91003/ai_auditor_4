@@ -1,9 +1,11 @@
 # AI Invoice Auditor
 
+**Company laptop / Nuvepro:** follow [START_HERE_NUVEPRO.md](START_HERE_NUVEPRO.md). It covers role-based AWS authentication without embedded keys, Docker credential forwarding, setup, demo checks and troubleshooting. Full project explanation: [PROJECT_DOCUMENTATION](docs/PROJECT_DOCUMENTATION.md). Four member walkthroughs: [TEAM_MEMBER_GUIDE](docs/TEAM_MEMBER_GUIDE.md). Exact implemented/tested/pending boundaries: [REQUIREMENTS_MATRIX](docs/REQUIREMENTS_MATRIX.md).
+
 **Current laptop/Groq setup:** see [LOCAL_QUICKSTART](docs/LOCAL_QUICKSTART.md). Run `START_LOCAL.cmd`, open `http://127.0.0.1:8765`, then enter your key in **Groq setup**. This temporary profile needs neither AWS nor Docker. The six-service Bedrock profile below is preserved for the final lab.
 
 
-A simple Python implementation of the supplied capstone, including the six-service containerized extension. **Source is implemented; live AWS and container integration are not yet verified on this Windows machine.** See `docs/BUILD_STATUS.md` for exact evidence and remaining checks.
+A simple Python implementation of the supplied capstone, including the six-service containerized extension. **Development Docker startup and isolated persistence checks passed. Live AWS Bedrock acceptance in Nuvepro remains to be run.** See `docs/REQUIREMENTS_MATRIX.md` for exact evidence and remaining external checks.
 
 ## Start in the NuvePro lab
 

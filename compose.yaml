@@ -57,6 +57,7 @@ services:
     networks: [auditor]
   agent:
     image: invoice-agent:1.0
+    user: "${LAB_UID:-10001}:${LAB_GID:-10001}"
     build:
       context: .
       dockerfile: agent/Dockerfile
@@ -68,6 +69,7 @@ services:
       A2A_URL: http://agent:8000/reporting
       INCOMING_DIR: /app/data/incoming
       REPORTS_DIR: /app/data/reports
+      HOME: /tmp
     volumes: ["./data/incoming:/app/data/incoming", "./data/reports:/app/data/reports"]
     ports: ["8000:8000"]
     depends_on:

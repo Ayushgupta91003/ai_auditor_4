@@ -1,0 +1,10 @@
+{
+  "tests_discovered": 76,
+  "passed": 76,
+  "skipped": 0,
+  "failures": 0,
+  "errors": 0,
+  "live_groq_tested": false,
+  "live_bedrock_tested": false,
+  "skipped_checks": []
+}

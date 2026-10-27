@@ -1,0 +1,12 @@
+{
+  "six_services_healthy": true,
+  "services": {
+    "agent": "healthy",
+    "mock-erp": "healthy",
+    "postgres": "healthy",
+    "qdrant": "healthy",
+    "redis": "healthy",
+    "streamlit-ui": "healthy"
+  },
+  "live_bedrock_tested": false
+}

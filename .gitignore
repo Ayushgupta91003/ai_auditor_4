@@ -12,9 +12,8 @@ data/reports/*
 test-results/
 *.log
 dist/
+*.zip
 
 .env.*
 !.env.example
 !.env.local.example
-
-*.zip

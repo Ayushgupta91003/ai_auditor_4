@@ -85,3 +85,10 @@ Current full verification suite: **70 passed, zero skipped**, with mocked model 
 73 automated tests passed, zero skipped in the full verification environment. Six Docker services are healthy and the live stack smoke check passed. Isolated storage tests passed for retained PostgreSQL audit/history and LangGraph checkpoints, retained Qdrant vectors, disposable Redis cache, and fresh initialization after deleting only test volumes. Live Langfuse smoke trace export and read-back passed. No live Bedrock account/model entitlement test has been performed.
 
 RAG now indexes canonical report facts and effective corrected invoice values, excluding generated explanation prose. Existing local indexes migrate once at startup without new model calls. Final deployment uses ChatBedrockConverse with an active configured model; see MODEL_COMPATIBILITY.md for the retired Command R+ change. Outstanding acceptance: office Bedrock chat/embeddings and permissions, user QA/correction demo, supplied real masked dataset if available, and final presentation.
+
+
+## Nuvepro handoff release
+
+76 automated tests passed with zero skips in the full dependency verification environment. Added non-overwriting random private lab configuration, Linux bind-mount UID/GID support, role/env/profile credential options, safe container credential diagnostics and live Bedrock/protocol check commands. Final API now rejects empty uploads before model or database processing.
+
+Supplied START_HERE_NUVEPRO.md, project/API documentation, requirements matrix, lab acceptance checklist, four detailed member guides with speaking/demo/viva notes, and an editable five-slide PowerPoint with speaker notes. Slides were rendered and inspected; package/layout/font validation passed. No live Nuvepro/AWS test is claimed. Original masked dataset and retired-model deviation remain disclosed external acceptance boundaries.

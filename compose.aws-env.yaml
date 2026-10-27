@@ -1,0 +1,8 @@
+# Optional: forward temporary credentials already exported by the lab shell.
+# Use the same -f options for up, exec, ps and down. Never paste compose config output.
+services:
+  agent:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}

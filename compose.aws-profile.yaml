@@ -1,0 +1,14 @@
+# Optional shared-profile authentication. Mount only the AWS config directory read-only.
+services:
+  agent:
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_SHARED_CREDENTIALS_FILE: /run/lab-aws/credentials
+      AWS_CONFIG_FILE: /run/lab-aws/config
+    volumes:
+      - type: bind
+        source: ${AWS_SHARED_DIR:?Set AWS_SHARED_DIR to your lab AWS config directory}
+        target: /run/lab-aws
+        read_only: true
+        bind:
+          create_host_path: false

@@ -2,3 +2,5 @@
 *.png binary
 *.docx binary
 *.jpg binary
+*.pptx binary
+*.sh text eol=lf
