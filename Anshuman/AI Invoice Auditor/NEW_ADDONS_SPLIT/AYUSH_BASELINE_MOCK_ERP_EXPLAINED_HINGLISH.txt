@@ -1,0 +1,274 @@
+AYUSH - PURANA / BASELINE PART: MOCK ERP, VALIDATION, DATABASE AUR REPORTING
+=========================================================================
+Easy Hinglish revision + presentation script
+
+Scope: Tumne jis purane Mock ERP wale part ka explanation manga hai, yeh uska
+baseline concept aur CURRENT selected Anshuman project mein uska implementation
+samjhata hai. Last-month ka exact source checkout verify nahi kiya gaya; isliye
+current code ko old submission ka exact code ya personal authorship proof mat bolo.
+Naya RAI/risk-gate part alag hai; usko end mein connect kiya hai.
+
+1. SABSE PEHLE YE ONE-LINER YAAD KARO
+------------------------------------
+"Invoice batata hai vendor ne kya bill kiya. Mock ERP batata hai company ne kya
+approve kiya tha. Validation dono ko compare karke differences nikalti hai."
+
+Example: Company ne 50 rolls, 12 USD per roll approve kiye. Vendor invoice mein
+50 rolls, 15 USD per roll bill karta hai. Calculation correct ho sakti hai,
+lekin approved price se mismatch hai. Hamara part isi difference ko pakadta hai.
+
+2. ERP, MOCK, PO AUR SKU KYA HAI?
+---------------------------------
+ERP = Enterprise Resource Planning: company ke purchase/vendor/item records.
+Mock ERP = us real enterprise system ka simulated service, training/demo ke liye.
+Real SAP/Oracle integration nahi hai; approved reference data hum seed karte hain.
+PO = Purchase Order: company ne vendor ko kya aur kitna order approve kiya.
+Vendor = supplier. SKU = item ka unique code, jaise SKU-001.
+
+LLM invoice ka text samajhne/extract karne mein help karta hai. Approved price
+LLM decide nahi karta; woh ERP reference se aata hai.
+
+3. COMPLETE FLOW - APNE PART KA
+-------------------------------
+Extracted/parsed invoice
+    -> required fields aur arithmetic checks
+    -> Mock ERP se PO/vendor/SKU fetch
+    -> invoice vs approved reference comparison
+    -> discrepancy list
+    -> report + current audit records save
+    -> new extension: risk gate / human review routing
+
+Hum PDF OCR dobara nahi karte. Previous stage se structured fields milte hain:
+invoice_number, vendor_id/name, po_number, currency, quantity, unit_price, etc.
+
+4. MOCK ERP API - KYA REQUEST AATI HAI?
+---------------------------------------
+File: services/mock_erp/main.py
+FastAPI HTTP service hai. Docker network mein base URL http://mock-erp:8000.
+Mapped host port par normally http://localhost:8001/docs se API demo kar sakte ho.
+
+health_check()        GET /health
+  Service ka status aur active backend (postgresql/json_cache) batata hai.
+get_purchase_order()  GET /po/PO-1001
+  Approved PO ka vendor aur line items return karta hai.
+get_vendor()          GET /vendor/VEND-001
+  Vendor name, country aur currency return karta hai.
+get_sku()             GET /sku/SKU-001
+  Item category, unit of measure aur gst_rate return karta hai.
+
+Record missing ho toh lookup endpoints HTTP 404 return karte hain.
+Pydantic response classes output ka expected structure define karti hain.
+API reference data deti hai; invoice ka approve/reject decision yahan nahi hota.
+
+5. ERP API DATA KAHAAN SE LAATI HAI?
+-----------------------------------
+File: services/mock_erp/db.py
+ERPDatabase class data access handle karti hai.
+
+__init__(): cache/pool initialise karke connection setup start karta hai.
+_init_connection(): pehle fallback JSON load, phir PostgreSQL connection try.
+_load_fallback_data(): vendors, SKU master aur PO JSON ko memory dictionaries
+  mein rakhta hai, taaki local demo mein reference lookup possible ho.
+get_po(): PO header aur uske line items DB se laata hai; fallback path bhi hai.
+get_vendor(): vendor_id se vendor details laata hai.
+get_sku(): item_code se SKU details laata hai.
+
+Identifiers strip/uppercase hote hain. SQL queries parameterized hain.
+Connection pool ka matlab har request ke liye fresh connection banane ki jagah
+available DB connection reuse karna; finally block connection pool ko lautaata hai.
+DB unavailable hone par JSON mode mein service chal sakti hai. Isliye /health
+mein healthy dikhna PostgreSQL connected hone ka proof nahi; backend bhi dekho.
+
+6. REFERENCE DATA AUR DATABASE FILES
+-----------------------------------
+data/ERP_mockdata/vendors.json       -> vendor master
+data/ERP_mockdata/sku_master.json    -> item master
+data/ERP_mockdata/PO Records.json    -> approved purchase orders and lines
+database/init.sql                   -> table/schema definitions + seed SQL
+database/seed_erp.py                 -> JSON records PostgreSQL mein load/upsert
+
+seed_erp.load_json(): chosen JSON file read karta hai.
+seed_erp.seed_postgres(): vendors/SKUs/POs/lines DB mein populate karta hai.
+Seeding = initial demo/reference data bharna. Upsert = new row insert, existing
+unique key ho toh selected values update.
+
+PostgreSQL mein ERP reference tables:
+erp.vendors, erp.sku_master, erp.purchase_orders, erp.po_line_items.
+PO ka vendor_id vendor ko link karta hai; PO line po_number se PO ko link karti hai.
+Foreign key isi relationship ko enforce karne ka database mechanism hai.
+
+7. DATA VALIDATION VS BUSINESS VALIDATION
+-----------------------------------------
+File: services/agent/graph/nodes/validator.py
+
+_resolve_vendor_id(): vendor name/details se reference ID resolve karne ki help.
+run_data_validation(): required header/line fields, currency aur arithmetic ki
+  checks. Question: "Invoice apne andar complete aur consistent hai kya?"
+run_business_validation(): PO/vendor/SKU reference se quantity, price, currency
+  aur item membership compare. Question: "Approved purchase se match hai kya?"
+validator_node(): checks run karke errors/discrepancies workflow state mein deta hai.
+
+Data example: quantity 10 x price 100, lekin line total 900 -> internal issue.
+Business example: 10 x 110 = 1100 correctly calculated, approved price 100 ->
+ERP mismatch. Dono validations alag reasons se zaroori hain.
+
+Normal reference access HTTP hai. Current validator mein HTTP exception par
+direct ERPDatabase fallback bhi hai. Isliye viva mein "every path strictly
+HTTP-only" mat claim karna. Normal service separation HTTP se hoti hai.
+
+8. RULES AUR CALCULATION - EK EXAMPLE
+------------------------------------
+File: config/rules.yaml
+Required headers: invoice_number, invoice_date, vendor_name, currency, total_amount.
+Required line fields: item_code, description, quantity, unit_price, line_total.
+Price tolerance 5%; quantity tolerance 0% (exact match expected).
+
+Deviation % = abs(invoice value - ERP value) / abs(ERP value) x 100.
+Approved price 12, billed 15 -> 3/12 x 100 = 25% -> price discrepancy.
+Approved quantity 50, billed 51 -> 1/50 x 100 = 2% -> quantity discrepancy.
+ERP USD, invoice EUR -> currency discrepancy, even though both ISO codes exist.
+Missing PO -> reference cannot be verified; current graph flags CRITICAL.
+
+Graph price check uses strictly greater than tolerance. Exactly 5% is within
+that comparison boundary. Graph path: >5% up to 10% WARNING; >10% ERROR.
+Zero ERP references have special limitations: some comparisons only run for
+positive ERP values. Don't claim the formula handles every zero case universally.
+
+Current graph also has an ADK/A2A business-validation route using the MCP tool;
+severity details differ across those routes. Above severity example is specifically
+run_business_validation() in graph/nodes/validator.py, not a universal promise.
+
+9. DISCREPANCY KA MATLAB
+------------------------
+Ek discrepancy = ek recorded mismatch, including:
+field_name, invoice_value, erp_value, deviation_pct, severity.
+Example: unit_price_SKU-001 | 15.00 | 12.00 | 25% | ERROR.
+Isse reviewer ko sirf "failed" nahi, actual problem aur expected value dikhte hain.
+Discrepancy automatically fraud prove nahi karti; correction/review needed ho sakta hai.
+
+10. REPORTING - RESULT KAISE BANTA HAI?
+--------------------------------------
+File: services/agent/graph/nodes/reporter.py
+generate_html_report(): readable HTML report banata hai.
+reporter_node(): findings se validation status/recommendation derive karta hai,
+JSON/HTML outputs banata hai aur database persistence invoke karta hai.
+
+validation_status: passed / partial / failed.
+recommendation: approve / manual_review / reject.
+Current reporter mein failed + currency mismatch ya missing mandatory header
+reject recommend kar sakta hai. Har discrepancy ka result reject nahi hota.
+Passed invoice ke approve recommendation mein translation confidence >=0.95 bhi hai.
+
+recommendation advisory result hai. review_status operational routing/decision hai.
+Approve recommendation ko bank payment instruction mat bolo.
+
+11. AUDIT DATABASE - ERP DATABASE SE KAISE DIFFERENT?
+----------------------------------------------------
+File: services/agent/utils/db.py; class AuditDatabase.
+ERP tables = approved reference. Audit tables = invoice evidence + checks + review.
+
+is_checksum_audited(): same file bytes ka checksum already processed hai kya?
+insert_invoice_audit(): current invoice header/evidence/status insert/upsert.
+insert_line_items(): invoice ke current structured items save/replace.
+insert_discrepancies(): findings save; nonempty updates replace existing findings.
+insert_human_feedback(): user correction feedback record.
+list_invoices(): dashboard history list.
+get_invoice_details(): selected invoice + associated details.
+update_review_status(): risk/review state update.
+record_review_decision(): reviewer decision record.
+record_correction(): correction details/history entry record.
+
+Key tables: audit.invoice_audit, invoice_line_items, discrepancies, human_feedback.
+Current implementation has local SQLite support as well; lab main store PostgreSQL.
+LangGraph checkpoints track workflow progress; they are not ERP master records.
+
+Important: current rows/report files can be overwritten/upserted. Feedback is
+recorded, but full immutable historical extraction/report versions are NOT provided.
+Empty line/discrepancy lists have early-return edge cases; don't claim all stale
+rows are always cleared. Current Python calculations use float, not Decimal-only.
+
+12. REAL SEEDED EXAMPLE - PRESENTATION MEIN BOLO
+-----------------------------------------------
+PO-1001 -> VEND-001, Global Logistics Ltd, USD.
+SKU-001 Pallet Wrapping Film: quantity 50, unit price 12, line 600.
+SKU-002 Industrial Gloves: quantity 120, unit price 3, line 360.
+SKU-003 Safety Helmets: quantity 30, unit price 15, line 450.
+Subtotal = 1410. Agar test invoice tax 141 deta hai, total = 1551.
+141 is example invoice tax, PO ka guaranteed tax field mat bolo.
+
+13. PURANA PART AUR MERA NEW PART KAISE CONNECT HOTE HAIN?
+---------------------------------------------------------
+Baseline: ERP comparison -> discrepancies -> report/persistence.
+New Ayush allocation: document/query/answer guardrails + weighted risk gate.
+Baseline batata hai "difference kya hai"; risk gate findings ke basis par
+auto-indexing versus human review route karta hai. RAI malicious instructions
+aur unsafe assistant requests ke trust boundaries handle karta hai.
+Currency mismatch: business validation finding -> reject recommendation ->
+risk gate pending_review. Document injection flag se direct currency reject nahi hota.
+
+14. READY-TO-SPEAK SCRIPT (ABOUT 2 MINUTES)
+------------------------------------------
+"Mera baseline part Mock ERP aur invoice validation layer hai.
+
+Simple terms mein, invoice batata hai supplier ne kya bill kiya, aur ERP batata
+hai company ne kya approve kiya tha. Dono ko compare karna zaroori hai, kyunki
+invoice ka total mathematically correct hote hue bhi approved price wrong ho sakta hai.
+
+Humne ek separate FastAPI Mock ERP service rakhi hai. Ismein purchase order,
+vendor aur SKU lookups ke endpoints hain. Reference records PostgreSQL ke ERP
+schema mein store hote hain, aur local testing ke liye JSON fallback available hai.
+
+Parsed invoice aane par pehle required fields aur arithmetic consistency check
+hoti hai. Uske baad validator ERP se approved PO aur vendor details fetch karta
+hai, phir currency, item, quantity aur price compare karta hai.
+
+Price ke liye configured tolerance five percent hai aur quantity exact match
+expected hai. For example, approved price twelve dollars hai aur vendor fifteen
+bill karta hai, toh deviation twenty-five percent hai. Yeh discrepancy banegi.
+
+Har finding mein field name, invoice value, expected ERP value, deviation aur
+severity hoti hai. Reporter in findings se status aur recommendation banata hai.
+JSON aur HTML reports generate hote hain, aur audit data database mein save hota hai.
+
+ERP reference aur audit evidence ko separate rakha gaya hai: ek approved order
+describe karta hai, doosra received invoice aur review result.
+
+New project mein isi validation output ke upar humne risk gate aur Responsible
+AI controls add kiye hain. Risky invoices human review ke liye route hote hain.
+System recommendation deta hai; financial payment authorize nahi karta."
+
+15. QUICK VIVA - SHORT ANSWERS
+------------------------------
+Q. Mock ERP kyon? Real ERP kyon nahi?
+A. Real enterprise access ke bina API integration aur business matching demo
+   karne ke liye controlled reference service banayi hai.
+Q. ERP API aur LLM ka difference?
+A. ERP approved facts deta hai; LLM extraction/language tasks mein help karta hai.
+Q. Separate service kyon?
+A. Reference data ownership aur invoice-processing responsibilities separate hain;
+   API contract se integration clear hoti hai aur real ERP adapter future mein possible hai.
+Q. SKU master aur PO line difference?
+A. SKU master batata hai item recognised hai. PO line batati hai us order mein
+   woh item, kitni quantity aur kis price par approve hua tha.
+Q. Record nahi mila toh?
+A. Lookup API 404; validator relevant missing-reference finding bana sakta hai.
+Q. Exactly 5% price mismatch?
+A. Graph price condition > tolerance hai, so exactly 5% us check se flag nahi hota.
+Q. DB down ho toh?
+A. Mock ERP JSON fallback use kar sakta hai. Active backend check karenge;
+   PostgreSQL persistence successful assume nahi karenge.
+Q. Reject aur pending_review dono kyon?
+A. Reject system recommendation hai; pending_review human decision ki state hai.
+Q. Old vs new mein tumhara contribution kya explain karoge?
+A. Baseline ERP comparison pehle se tha; new allocation RAI/risk routing hai.
+   Ownership discussion mein actual group work ke hisaab se bolunga.
+
+LAST 30-SECOND REVISION
+-----------------------
+Invoice = billed value. ERP = approved value. PO = approved order. SKU = item ID.
+API gives reference; validator compares; reporter summarises; audit DB persists.
+Price tolerance 5%, quantity 0%. Risk and RAI are the additional layer.
+Read first: mock_erp/main.py -> mock_erp/db.py -> validator.py -> reporter.py.
+
+All file paths above are relative to:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor
