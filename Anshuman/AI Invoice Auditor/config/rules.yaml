@@ -1,0 +1,147 @@
+# ==============================================================================
+# AI Invoice Auditor – Validation Rules Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. General Invoice Requirements
+# ------------------------------------------------------------------------------
+required_fields:
+  header:
+    - invoice_number    # Aligned with parser output (fallback handles invoice_no)
+    - invoice_date
+    - vendor_name      # Invoices have company names; vendor_id is auto-resolved
+    - currency
+    - total_amount
+  line_item:
+    - item_code
+    - description
+    - quantity          # Aligned with parser output
+    - unit_price
+    - line_total        # Aligned with parser output
+
+# ------------------------------------------------------------------------------
+# 2. Field Data Type Rules
+# ------------------------------------------------------------------------------
+data_types:
+  invoice_number: str
+  invoice_date: date
+  vendor_name: str
+  vendor_id: str
+  currency: str
+  total_amount: float
+  quantity: float
+  unit_price: float
+  line_total: float
+
+# ------------------------------------------------------------------------------
+# 3. Business Validation Thresholds
+# ------------------------------------------------------------------------------
+tolerances:
+  # Maximum allowed deviation when comparing invoice vs ERP
+  price_difference_percent: 5       # ±5% tolerance in unit price
+  quantity_difference_percent: 0    # Quantity must match exactly
+  tax_difference_percent: 5         # ±5% tolerance for rounding / tax calculations
+
+# ------------------------------------------------------------------------------
+# 4. Currency Validation Rules
+# ------------------------------------------------------------------------------
+accepted_currencies:
+  - USD
+  - EUR
+  - INR
+  - GBP
+  - VND                             # Added for Vietnamese invoices
+
+# Fallback mapping for currency symbols → ISO codes
+currency_symbol_map:
+  "$": "USD"
+  "€": "EUR"
+  "₹": "INR"
+  "£": "GBP"
+  "₫": "VND"
+
+# ------------------------------------------------------------------------------
+# 5. Validation Policies
+# ------------------------------------------------------------------------------
+validation_policies:
+  missing_field_action: "flag"
+  total_mismatch_action: "manual_review"
+  invalid_currency_action: "reject"
+  auto_approve_confidence_threshold: 0.95
+
+# ------------------------------------------------------------------------------
+# 5b. Human-in-the-Loop Risk Scoring
+# ------------------------------------------------------------------------------
+# The risk_gate node converts validation results into a single weighted risk
+# score. If score <= auto_approve_threshold (and no hard_block fires) the invoice
+# is auto-approved and indexed into the vector store. Otherwise it is held for
+# human review and is NOT indexed until a human approves it.
+risk_scoring:
+  auto_approve_threshold: 0.30          # score at or below this => auto-approve + index
+  low_translation_confidence: 0.75      # translation confidence below this adds risk
+
+  # Per-discrepancy weight by severity (added once per discrepancy).
+  severity_weights:
+    CRITICAL: 1.00
+    ERROR: 0.60
+    WARNING: 0.30
+    INFO: 0.10
+
+  # Additional flat weights.
+  weights:
+    data_error: 0.40                    # per missing/invalid data-validation error
+    low_translation_confidence: 0.30    # applied once when confidence is low
+
+  # Any hard_block that fires forces human review regardless of the score.
+  hard_blocks:
+    - reject_recommendation             # reporter recommended "reject"
+    - critical_discrepancy              # any CRITICAL severity discrepancy
+    - invalid_currency                  # currency not in accepted list
+    - missing_header_field              # a mandatory header field is missing
+
+# ------------------------------------------------------------------------------
+# 5c. Responsible AI Guardrails
+# ------------------------------------------------------------------------------
+# Applied by services/agent/utils/guardrails.py at every trust boundary:
+# document text in, auditor query in, model answer out. Every trip is logged as
+# a finding and emitted as a LangFuse span.
+responsible_ai:
+  block_prompt_injection: true        # refuse auditor queries that try to override instructions
+  enforce_scope: true                 # refuse medical / legal / investment / hacking questions
+  strip_secrets: true                 # remove credentials & connection strings before prompting
+  redact_pii_in_answers: true         # mask emails, cards, IBANs, phone numbers in answers
+  redact_pii_in_reports: false        # reports are internal; keep contact details for the auditor
+  enforce_groundedness: true          # replace unsupported answers with an explicit refusal
+  min_groundedness: 0.30              # answer tokens that must appear in the retrieved context
+  financial_disclaimer: true          # append human-accountability notice to decision text
+  max_document_chars: 200000
+  max_query_chars: 2000
+
+# ------------------------------------------------------------------------------
+# 5d. Agentic RAG Pipeline
+# ------------------------------------------------------------------------------
+rag:
+  collection: invoice_audit_chunks
+  chunk_size: 900                     # characters per chunk
+  chunk_overlap: 150
+  top_k: 12                           # candidates pulled by the Semantic-Retriever tool
+  rerank_top_n: 5                     # chunks kept by the Chunk-Ranker tool
+  triad_pass_threshold: 0.70          # avg(context_relevance, groundedness, answer_relevance)
+  max_retries: 3                      # retrieval/refinement attempts before returning best effort
+
+# ------------------------------------------------------------------------------
+# 6. Reporting Parameters
+# ------------------------------------------------------------------------------
+reporting:
+  include_translation_confidence: true
+  include_discrepancy_summary: true
+  report_format: "HTML"
+  output_dir: "./outputs/reports"
+
+# ------------------------------------------------------------------------------
+# 7. Logging and Audit Settings
+# ------------------------------------------------------------------------------
+logging:
+  enable_audit_log: true
+  log_file: "./logs/invoice_auditor.log"
+  log_level: "INFO"

@@ -1,0 +1,317 @@
+MEMBER 4 - UI, HUMAN REVIEW, MCP/A2A/ADK, TRACING AND DEPLOYMENT
+==============================================================
+
+REFERENCE AND TEAM RESPONSIBILITIES
+This guide describes Anshuman/AI Invoice Auditor only. The friend's supplied
+code is the source of truth. These are presentation/study roles, not fabricated
+authorship claims. Member 1 covers intake/workflow; Member 2 validation/data;
+Member 3 RAG/model/cache/guardrails; you connect these through the user interface
+and explain service/protocol/runtime behavior. Read architecture file 05 first.
+
+1. YOUR PART IN ONE SENTENCE
+----------------------------
+"Mera part auditor ko dashboard deta hai, corrections aur human decisions API
+se apply karta hai, frameworks ko MCP/A2A se connect karta hai aur Docker plus
+Langfuse se system ko operate/observe karne mein help karta hai."
+
+2. READ THESE FILES IN ORDER
+-----------------------------
+docker-compose.yml: six services, environment, ports, volumes and dependencies.
+services/agent/main.py: application lifespan and public endpoints.
+services/streamlit_ui/app.py: five tabs and HTTP calls.
+services/agent/bootstrap.py: tool/agent registration order.
+services/agent/tools/registry.py: Tool and ToolRegistry.
+services/agent/mcp_server/client.py and server.py: custom MCP transport.
+services/agent/a2a/models.py, registry.py, client.py, server.py: custom A2A layer.
+services/agent/a2a/langgraph_agents.py: five registered workflow capabilities.
+services/agent/adk_agents/base.py: ADK Runner/FunctionTool integration.
+services/agent/adk_agents/translation_agent.py and business_validation_agent.py.
+services/agent/utils/observability.py: tracing facade and compatibility behavior.
+services/agent/Dockerfile and entrypoint.sh; mock ERP/UI Dockerfiles.
+
+3. UI IS A CLIENT, NOT THE AUDIT ENGINE
+---------------------------------------
+Streamlit runs in its own container and calls AGENT_URL over HTTP.
+The UI fetches invoice lists/details, review queue, watcher status and health.
+Auditing happens in the agent service; closing the browser does not stop the
+watchdog thread inside that service. Streamlit scripts rerun on interactions,
+so st.session_state and widget keys help preserve selections/forms.
+
+Five tabs cover:
+  Invoice explorer: current audit records, evidence, line items and findings.
+  Human review: pending queue, editable headers/lines, revalidation/decision.
+  Corrections/feedback: records a human observation.
+  RAG assistant: question, scope, answer, sources and triad history.
+  System: watcher controls, health/dependencies, agents/tools and index rebuild.
+Use the exact labels visible in the installed version; emoji styling is cosmetic.
+
+This version is not the old Groq UI at 8765. Normal dashboard is port 8501.
+It expects source documents in the incoming folder, with /process available for
+manual path/scan requests. Do not describe a web-upload feature absent here.
+
+4. FASTAPI LIFESPAN AND STARTUP
+--------------------------------
+lifespan() verifies dependencies, calls bootstrap(), starts the singleton
+watchdog, yields while serving requests, then stops the watcher on shutdown.
+verify_dependencies() treats PostgreSQL and mock ERP as required when
+STRICT_STARTUP=true. Redis and Qdrant can be degraded with fallback behavior.
+Thus /health returning status='healthy' is not proof every external dependency
+or real model is operational. Inspect /health/dependencies and backend fields.
+
+bootstrap() imports tool modules first, registers LangGraph-labeled agents,
+then attempts ADK agent registration. It is idempotent: repeated calls return
+the summary instead of registering duplicate handlers.
+
+5. CORE API MAP
+----------------
+GET  /health                         runtime/backend/agentic summary.
+GET  /health/dependencies            rechecks dependencies.
+POST /observability/test             emits a synthetic trace hierarchy.
+GET  /agents                         agent directory.
+GET  /.well-known/agent-card.json    primary orchestration card.
+POST /process                        {file_path:..., scan_all:...}.
+POST /rag/query                      {query, invoice_id, max_retries, user}.
+POST /rag/index/{invoice_id}          explicit index request.
+POST /rag/rebuild                    rebuild from persisted records.
+GET  /rag/stats                       store/cache/config details.
+GET  /invoices                       current summary list.
+GET  /invoices/{invoice_id}           details and feedback.
+POST /invoices/{invoice_id}/feedback  append feedback only.
+GET  /review/queue                   pending_review records.
+POST /invoices/{invoice_id}/revalidate apply edits and rerun checks.
+POST /invoices/{invoice_id}/approve    index and approve.
+POST /invoices/{invoice_id}/reject     record rejection.
+GET  /watcher/status                 stats and recent events.
+POST /watcher/toggle                 pause/resume.
+POST /watcher/scan                   one immediate cycle.
+
+FastAPI /docs exposes API contracts. Do not confuse internal http://agent:8000
+with host http://localhost:8000, or company-laptop localhost with lab localhost.
+
+6. FEEDBACK VERSUS REVALIDATION VERSUS DECISION
+-----------------------------------------------
+Feedback form -> /feedback -> insert_human_feedback().
+It records a correction suggestion; it does not itself rerun validation.
+
+Revalidate with Edits -> /revalidate:
+  _rebuild_state() loads the current invoice and lines from the DB.
+  Allowed headers are applied; numeric subtotal/tax/total are converted to float.
+  Optional line_items replaces the supplied current list.
+  validator_node() -> reporter_node() -> compute_risk().
+  DB review_status is explicitly kept pending_review after human edits.
+  record_correction() appends feedback and revalidated=True.
+This operation updates current structured data/report files; it is not the old
+project's append-only report-version mechanism.
+
+Approve & Index -> /approve:
+  rebuild state -> indexing_node() -> update status approved -> record decision.
+There is no additional business-validation run automatically required by that
+endpoint, and indexed success should be checked in rag_indexed, not only the
+human-readable success message. A human can override a recommendation.
+
+Reject -> /reject:
+  update rejected -> append decision. It does not automatically erase existing
+vectors from a previously indexed record. 'Never index a newly rejected pending
+invoice' and 'revoke all old indexed evidence' are separate guarantees.
+
+Review notes on the screen are used for approve/reject decisions. Do not assume
+every notes box value is attached to each correction, since payloads differ.
+
+7. MCP EXPLAINED SIMPLY
+------------------------
+Model Context Protocol here provides tool discovery and named invocation.
+Agent = decision/coordination role. Tool = reusable operation implementation.
+ToolRegistry records name, description, JSON inputSchema, owning role and hints.
+Decorator @registry.tool(...) registers the Python handler at import time.
+
+MCPClient.call(name, **arguments):
+  discover tools/list (cached locally), confirm name exists,
+  send tools/call with arguments,
+  server dispatches registry.call(),
+  handler executes, result includes structuredContent or an error.
+The registry catches argument/handler exceptions and produces a uniform result.
+JSON schemas are advertised; registry.call() does not run a full JSON Schema
+validator before every handler. Python signatures and tool-specific checks
+provide some enforcement, but do not claim universal schema validation.
+
+MCP_SERVER_URL empty: in-process server dispatch (default in Compose).
+MCP_SERVER_URL set: HTTP JSON-RPC to base + /mcp.
+Server also contains a line-oriented stdio serving function.
+This is a custom implementation with MCP-shaped methods, not proof of official
+SDK transport conformance or a remote network hop on every call.
+
+8. THIRTEEN TOOLS IN THE INSPECTED SOURCE
+------------------------------------------
+invoice_watcher, data_harvester, lang_bridge, data_completeness_checker,
+business_validation, erp_lookup, insight_reporter,
+vector_indexer, semantic_retriever, chunk_ranker, response_synthesizer,
+rag_evaluator, query_refiner.
+
+README/bootstrap comments mention eleven, but the current decorators declare
+thirteen. /mcp/tools or bootstrap summary is the runtime source of truth.
+Some main graph nodes call Python functions directly. The active RAG role
+functions generally discover/call tools through this MCP client. Avoid the
+blanket statement 'all code is executed only through MCP'.
+
+9. A2A EXPLAINED SIMPLY
+------------------------
+Agent-to-Agent communication delegates a skill to another agent role.
+Discovery obtains an AgentCard: name, description, URL, framework, capabilities,
+skills and examples. Invocation uses JSON-RPC message/send.
+Custom model classes include AgentSkill, AgentCard, Part, Message, TaskStatus,
+Task and completed/failed task helpers.
+
+A2AClient.send() constructs a Message, skill metadata and JSON-RPC envelope.
+It dispatches to an agent, parses a Task, checks completed status and extracts
+the returned artifact data. try_send() gives a fallback instead of raising.
+get_card()/supports() are available for checking capability support; send()
+itself does not universally force a separate discovery request first.
+
+A2A_BASE_URL empty: in-process server/registry dispatch.
+A2A_BASE_URL set: HTTP to base + /a2a/{agent_id}.
+Discovery includes /a2a/agents and agent-card routes beneath /a2a/{agent_id}.
+This source defines its own A2A envelopes/registry/server; do not say it uses
+the old project's official A2A SDK adapter.
+
+10. SEVEN REGISTERED AGENT CARDS
+----------------------------------
+Five LangGraph-labeled capabilities:
+  invoice-monitor-agent, extractor-agent, invoice-data-validation-agent,
+  reporting-agent, rag-orchestrator-agent.
+Two Google ADK-labeled capabilities:
+  translation-agent, business-validation-agent.
+
+Seven registry entries do not mean seven separate containers or every entry
+running an LLM. Cards describe capabilities. Some handlers are deterministic.
+
+11. GOOGLE ADK EXECUTION
+-------------------------
+ADKAgent._build() attempts imports of LlmAgent, LiteLlm, Runner,
+InMemorySessionService and FunctionTool.
+It wraps discoverable MCP tools as ADK callable tools using mcp_tool_function().
+Translation exposes lang_bridge. Business validation exposes business_validation
+and erp_lookup. run_with_adk() asks the ADK model to use those tools and return
+usable structured JSON. If unavailable/unusable, run_deterministic() calls the
+same MCP capability directly. executor reports google_adk or fallback behavior.
+
+ADK_ENABLED and the explicit model-credential check influence this route.
+Google's ADK package and google.genai message types do not, by themselves,
+mean a Gemini model is selected: model=LiteLlm(BEDROCK_MODEL) is the intended
+model route. Do not claim every Google import is a Gemini API call.
+ADK sessions are in-memory; workflow checkpoints are a different storage layer.
+
+12. LANGFUSE OBSERVABILITY
+---------------------------
+utils/observability.py provides trace(), span(), record_generation(), score
+recording and emit_test_trace(). It handles old/new SDK APIs through a facade.
+Traces follow logical audits/questions/messages; nested spans show node/tool
+timing and failures. RAG triad scores can be attached as trace scores.
+ContextVar helps track nesting for legacy clients; modern SDK context supports
+parent-child relationships. No keys/SDK or connection errors degrade to logs.
+
+Important: this version can send input/output payloads and prompt/completion
+arguments through tracing helpers. _truncate() caps serialized length around
+4000 characters; truncation is NOT redaction. Do not reuse the earlier project's
+'operation names only, no invoice content in traces' claim.
+Guardrails sanitize some paths, but observability is not a universal privacy
+filter. Explain what the actual trace contains before presenting private data.
+
+POST /observability/test is a controlled connectivity test. Its success does not
+prove every real model call automatically records token usage: inspect actual
+record_generation call sites and the trace. In the current source the wrapper's
+completion method does not universally invoke record_generation().
+
+13. SIX-CONTAINER DEPLOYMENT
+-----------------------------
+postgres: Postgres16, host5432, postgres_data named volume; init.sql mounted.
+qdrant: vector service, host6333, qdrant_data named volume.
+redis: Redis7, host6379, no explicit durable volume.
+mock-erp: FastAPI reference service, host8001 -> internal8000.
+agent: FastAPI/workflow/watcher/protocols, host8000, incoming and report binds.
+streamlit-ui: dashboard, host8501.
+
+All share auditor_net. Service DNS names are used inside Docker. depends_on
+orders startup; agent also performs strict required-dependency checks.
+The agent Dockerfile installs Tesseract eng/spa/deu and Poppler. Entrypoint
+starts with enough permission to chown bind folders, then execs gosu appuser
+(UID1001). Do not describe that as never starting root; privileges are dropped
+before the application server runs.
+
+14. WHAT IS DURABLE?
+----------------------
+PostgreSQL named volume: source/current audit data, feedback and checkpoints.
+Qdrant named volume: derived vector index, rebuildable from saved evidence.
+Host bind mounts: source documents, generated report files and config.
+Redis: disposable cache; no explicit named volume configured.
+In-memory cache/vector/ADK session/A2A task state: process lifetime only.
+Normal docker compose down retains named volumes. down -v deletes them.
+Do not run a wipe merely to demonstrate persistence to classmates.
+
+This Compose does not explicitly disable Redis snapshot persistence. Therefore
+'no named volume' is not the same as guaranteeing a precise cache reset across
+every restart/recreation scenario. Business correctness should not depend on it.
+
+15. PRACTICAL GROUP DEMO ORDER
+-------------------------------
+1. Show docker compose ps and system dependency/backend information.
+2. Member 1 shows watcher and evidence extraction.
+3. Member 2 shows current findings, ERP values and risk score.
+4. You open Human Review, edit a test header/line, Revalidate with Edits, show
+   feedback record, then explicitly Approve & Index or Reject.
+5. Member 3 demonstrates a question against approved/indexed evidence.
+6. You show /agents, /mcp/tools and a trace; distinguish in-process versus HTTP.
+7. State actual model/backend mode and observed limitations.
+
+Existing scripts/test_pipeline.py is an integration script, not evidence of
+76 passing tests from the earlier codebase. Read it before running: it exercises
+processing/persistence/rebuild and may affect test state. These notes did not
+execute it or change the working friend's code.
+
+16. SECURITY AND HONEST LIMITATIONS
+-------------------------------------
+main.py in this version does not show a bearer-auth middleware like the old
+project. Roles/reviewer names are provided as request data, not verified SSO.
+Treat it as an isolated teaching deployment, not a fully authenticated finance
+production system. Never show .env contents or paste compose config output with
+expanded secrets in presentations. The same existing image tags/host ports can
+conflict with another invoice stack; avoid starting both accidentally.
+
+17. VIVA QUESTIONS
+-------------------
+Q: MCP versus A2A?
+A: MCP discovers/calls tools; A2A discovers/delegates capabilities to agent roles.
+Q: Are they always HTTP here?
+A: No. Empty transport settings default to in-process custom dispatch.
+Q: How many tools/agents?
+A: Source declares thirteen tools and seven agent cards; verify runtime directory.
+Q: Does feedback mean invoice is revalidated?
+A: No. Feedback-only and apply/revalidate endpoints are distinct.
+Q: Does approval send payment?
+A: No, it records human review status and requests knowledge indexing.
+Q: Does healthy mean Bedrock ran?
+A: No. Model and vector/cache fallbacks can keep parts of the service operational.
+Q: Why six containers but seven agents?
+A: Agent roles live inside the agent service. Container is deployment isolation;
+   agent is an application capability/framework concept.
+Q: Does truncation remove secrets?
+A: No. Length limiting and redaction are different controls.
+
+18. TWO-MINUTE SPEECH
+----------------------
+"Main integration aur reviewer experience explain karunga. Streamlit agent
+API ko call karke invoice explorer, review queue, feedback, RAG aur system tabs
+provide karta hai. Feedback record karna aur edits apply karke revalidate karna
+alag operations hain. Human approve karne par invoice index hota hai. MCP tools
+discover aur invoke karta hai, A2A agent skills delegate karta hai. Is code mein
+default transport in-process hai aur HTTP configurable hai. ADK translation aur
+business validation roles tool loop use kar sakte hain, with deterministic
+fallbacks. Docker mein six services hain; PostgreSQL evidence rakhta hai,
+Qdrant derived vectors aur Redis cache. Langfuse tracing execution samjhata hai,
+lekin payload truncation ko privacy redaction nahi bolenge."
+
+STUDY CHECKLIST
+[ ] Run the demo handover without confusing old/new interfaces.
+[ ] Explain feedback, revalidation, approval and rejection independently.
+[ ] Draw MCP tool call and A2A delegation envelopes.
+[ ] Identify thirteen tool names and seven role cards.
+[ ] Show actual backends and trace contents without exposing credentials.

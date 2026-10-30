@@ -1,0 +1,290 @@
+MEMBER 1 - DOCUMENT INGESTION, TRANSLATION AND LANGGRAPH WORKFLOW
+===============================================================
+
+PROJECT REFERENCE
+These notes describe the friend's project inside:
+Anshuman/AI Invoice Auditor
+They do NOT describe the earlier ai-invoice-auditor implementation.
+Notes are based on source inspection, not a fresh Nuvepro execution.
+Member numbers are study/presentation responsibilities, not author credits.
+
+FOUR-PERSON DIVISION
+Member 1: document entry, extraction/OCR, translation, parsing, orchestration.
+Member 2: ERP, financial validation, database, reports and risk scoring.
+Member 3: Bedrock wrapper, RAG, vectors, cache and Responsible AI guardrails.
+Member 4: FastAPI/Streamlit, human review, MCP/A2A/ADK integration, tracing,
+          Docker deployment and system demonstration.
+All four should first read 05_ARCHITECTURE_EXPLAINED.txt.
+
+1. YOUR PART IN ONE SENTENCE
+----------------------------
+"Mera part incoming document ko detect karke uska text nikalta hai, language
+handle karta hai, structured invoice banata hai aur next audit stages tak
+LangGraph state pass karta hai."
+
+Input: a file path such as /app/data/incoming/INV_ES_003.pdf.
+Output: an InvoiceState dictionary containing source evidence, extracted
+header fields, line items and processing metadata. Member 2 consumes it.
+You are not deciding whether an invoice should be paid.
+
+2. READ THE CODE IN THIS ORDER
+------------------------------
+A. services/agent/graph/state.py
+   InvoiceState, InvoiceLineItem, Discrepancy: dictionary-shaped shared data.
+B. services/agent/watcher.py
+   InvoiceWatchdog, scan_cycle(), compute_checksum(), get_watchdog().
+C. services/agent/graph/nodes/extractor.py
+   extractor_node(), extract_pdf_text(), extract_docx_text(), ocr_pdf(),
+   ocr_image(), load_metadata().
+D. services/agent/graph/nodes/translator.py
+   translator_node(): fallback in-graph translation path.
+E. services/agent/adk_agents/translation_agent.py
+   TranslationAgent: normal A2A translation delegate, lang_bridge tool.
+F. services/agent/graph/nodes/parser.py
+   parser_node(): structured invoice extraction from translated evidence.
+G. services/agent/graph/workflow.py
+   build_workflow(), translation_node(), run_invoice_audit_pipeline(),
+   _run_sequential(), get_checkpointer().
+H. services/agent/config_loader.py and config/prompts.yaml
+   Prompt/rule loading and translation/parsing prompt contracts.
+I. services/agent/tools/invoice_tools.py
+   invoice_watcher, data_harvester, lang_bridge: published tool wrappers.
+
+3. HOW A DOCUMENT ENTERS THIS VERSION
+------------------------------------
+The main automatic route is a bind-mounted incoming folder. A daemon thread
+polls that directory. The default poll interval is four seconds; main.py can
+read WATCHDOG_POLL_INTERVAL. main.py starts the watchdog in its lifespan and
+stops it on shutdown. API /process can also process a path or scan the folder.
+
+Important: this version is not the old port-8765 Groq upload dashboard.
+The friend version uses Streamlit on port 8501 and a folder-based watcher.
+Do not assume an upload button from the earlier project exists here.
+
+SUPPORTED_EXTENSIONS includes .pdf, .docx, .doc, .png, .jpg, .jpeg and .tiff.
+Support is not equally strong: .doc is passed to python-docx, which normally
+expects DOCX. Do not promise reliable legacy binary .doc support.
+
+4. WATCHDOG: STEP-BY-STEP
+-------------------------
+scan_cycle() lists supported non-hidden files and inspects size and mtime.
+If a new file was modified less than 1.5 seconds ago, it waits for another
+cycle. If a tracked file changes size/mtime, it marks it unstable and waits.
+This reduces the chance of reading a file halfway through a copy; it is a
+heuristic, not a file-lock/atomic-upload guarantee.
+
+For a stable file it computes SHA-256 over 65,536-byte chunks. Reading chunks
+avoids loading the whole file only to calculate a checksum.
+
+It checks two places:
+  a. _seen_files: in-memory state for this watchdog process.
+  b. audit_db.is_checksum_audited(): previously persisted file content.
+
+If already audited, it skips the file. Otherwise it calls
+run_invoice_audit_pipeline(str(filepath)). It records TRIGGERED, PROCESSED,
+SKIPPED or ERROR events and updates counters. Recent events are a deque capped
+at 60. Threading.Lock protects shared status/counter access. threading.Event
+controls stop and pause. This is polling, not a cloud event queue.
+
+Content identity versus name: a renamed identical file has the same checksum;
+a file with changed bytes has a different checksum even if its name is unchanged.
+Do not call this business-invoice duplicate detection: two PDFs with the same
+invoice number but different bytes can still have different checksums.
+
+5. EXTRACTION ROUTING
+---------------------
+extractor_node() computes checksum again and checks the database, giving a
+second deduplication boundary for calls that bypass the watcher.
+
+PDF:
+  pdfplumber attempts embedded-text extraction page by page.
+  If that raises an exception, pypdf is tried.
+  If text is absent or fewer than 15 characters, ocr_pdf() is attempted.
+  ocr_pdf(): pdf2image + Poppler rasterize at 300 DPI; Tesseract reads pages.
+
+DOCX:
+  python-docx reads nonempty paragraphs AND table rows.
+  Table cells are joined with ' | ' so line-item content is not discarded.
+
+Images:
+  PIL opens the image and pytesseract.image_to_string() runs OCR.
+  Default OCR_LANGS is eng+spa+deu, configurable through the environment.
+
+The state records extraction_method, raw_extracted_text and any error.
+On empty extraction it records an error string; that alone is not a universal
+early-stop mechanism for the rest of the workflow.
+
+OCR versus LLM: OCR converts image pixels to text. Translation changes language.
+Parsing maps text to fields. They are separate tasks; one does not replace another.
+
+6. SIDECAR METADATA
+-------------------
+load_metadata() looks for a file with the same stem and .meta.json suffix.
+Example: INV_ES_003.pdf -> INV_ES_003.meta.json.
+It can carry subject/language hints or email-related metadata.
+The parser uses a subject regex to supplement missing PO/invoice numbers.
+This is not a live Gmail/Outlook integration: sidecar metadata is input data.
+
+7. NORMAL TRANSLATION CALL CHAIN
+--------------------------------
+workflow.translation_node(state)
+  -> a2a_client.try_send('translation-agent', 'translate_invoice', {'text':raw})
+  -> TranslationAgent.execute()
+  -> Google ADK Runner, when ADK/model credentials are available
+  -> MCP lang_bridge tool
+  -> guardrails.scan_document()
+  -> translation prompt + LLMClient.completion()
+  -> parsed source_language / translated_text / translation_confidence.
+
+Member 4 explains the protocol machinery. You explain the language behavior.
+lang_bridge caches by model plus sanitized text through ResponseCache.
+Translation result includes whether the cached value was used.
+
+When the ADK runner cannot operate, the same translation agent can directly
+invoke the MCP tool deterministically. If the A2A result itself is unavailable
+or unusable, workflow.translation_node() calls translator_node(state).
+The fallback translator can bypass English translation using metadata and
+simple heuristics. A malformed model translation falls back to raw text and
+reduced confidence rather than proving a successful English translation.
+
+CRUCIAL LOCAL-MODE DETAIL:
+utils/llm_client.py has no real translation model in local mode. It detects
+language and passes text through. Non-English text receives confidence 0.0.
+Therefore 'application works without keys' does not mean genuine translation
+or live Bedrock/ADK reasoning ran. Inspect logs and the executor result.
+
+8. STRUCTURED PARSING
+---------------------
+parser_node() loads config/prompts.yaml -> parsing system/user templates.
+It sends translated_text, falling back to raw text, plus metadata to llm_client.
+It strips simple Markdown code fences and calls json.loads().
+
+Expected output includes invoice_number, invoice_date, vendor_id, vendor_name,
+po_number, currency, subtotal, tax_amount, total_amount and line_items.
+The complete parsed dictionary is also stored as extracted_raw.
+Missing invoice/PO identifiers can be supplemented from metadata subject.
+
+JSON is structured syntax, not proof of semantic correctness. A valid JSON
+object can contain a wrong currency or amount; Member 2's rules handle that.
+This code uses dictionary/TypedDict contracts. It does not enforce every
+parsed field through a Pydantic Invoice model as the earlier implementation did.
+On parsing exception it records state['error'] and logs a response excerpt.
+
+9. LANGGRAPH FLOW - MEMORIZE THIS ORDER
+--------------------------------------
+START
+  -> extractor
+  -> translator        (A2A translation delegate)
+  -> parser
+  -> validator
+  -> business_validation (second, ADK/A2A validation route)
+  -> reporter
+  -> risk_gate
+      -> indexing -> END, only if review_status == 'auto_approved'
+      -> END otherwise, awaiting human action.
+
+LangGraph nodes are ordinary functions returning updated state dictionaries.
+StateGraph defines ordering and the conditional branch. The graph does not
+automatically make every ordinary Python function an autonomous LLM agent.
+Some registered A2A agents wrap capabilities; the ordinary main graph also
+calls several node functions directly. Avoid saying every node uses MCP.
+
+10. STATE FIELDS YOU MUST UNDERSTAND
+------------------------------------
+file_path/file_checksum: source location and byte identity.
+metadata: sidecar hints.
+skipped/skip_reason: duplicate or intentionally skipped processing.
+raw_extracted_text/translated_text: source evidence and language-normalized text.
+source_language/translation_confidence: detection and confidence information.
+invoice_number/vendor_id/po_number/currency/amounts: parsed header data.
+line_items: description, code, quantity, price and total for each line.
+discrepancies/data_validation_errors: Member 2's audit findings.
+validation_status/recommendation: financial/reporting outcome.
+risk_score/review_status: automatic versus human gate.
+invoice_id: persisted business identity.
+thread_id: workflow/checkpoint identity.
+report paths/rag_indexed/error: export, derived index and failure information.
+
+11. CHECKPOINTS AND FALLBACK EXECUTION
+-------------------------------------
+get_checkpointer() attempts a PostgresSaver with search_path=langgraph.
+run_invoice_audit_pipeline() builds thread_id from the source filename stem:
+'invoice-' + Path(file_path).stem. This is different from a checksum or UUID.
+Different directories with identical stems can share that thread identifier.
+
+The graph is compiled lazily and reused. If checkpointer setup fails it can
+compile without persistence. If LangGraph is unavailable, or invocation raises,
+the code can run _run_sequential() in the same node order.
+
+Do not promise automatic exactly-once resume: the public function initializes
+state and invokes the graph, while its exception fallback reruns sequentially.
+A checkpointer being present is not the same as a tested explicit resume API.
+The shown main.py has no dedicated old-project /retry endpoint.
+
+12. HANDOVER TO OTHER MEMBERS
+------------------------------
+To Member 2: give the exact header/line field names, raw evidence, translation
+confidence and missing/error fields. Validation must not infer approval merely
+because extraction returned a dictionary.
+To Member 3: explain why approved evidence can be indexed and why original
+text is useful for rebuilding vectors.
+To Member 4: explain watcher startup, events, pause/resume and process endpoints.
+
+13. MANUAL DEMO YOU CAN OWN
+---------------------------
+Use an existing lab session. Do not wipe its database.
+1. Open Streamlit -> system/watchdog view; show active polling and recent events.
+2. Identify a genuinely new document in data/incoming or use a safe test copy
+   with changed content. A byte-identical copy is correctly deduplicated.
+3. Show raw extracted text and parsed fields in the invoice detail.
+4. For Spanish/German, inspect actual translation/confidence rather than merely
+   saying a foreign-language filename proves translation worked.
+5. Show duplicate detection with a byte-identical renamed copy.
+6. Show an image uses OCR, and explain language packs/Poppler dependencies.
+
+Existing outputs/reports are historical artifacts. Several supplied files show
+missing fields, reject outcomes and foreign-language confidence 0.0. They are
+not evidence that the current Nuvepro model just succeeded. Use a fresh observed
+run if asked to prove model execution.
+
+14. VIVA QUESTIONS AND SHORT ANSWERS
+-------------------------------------
+Q: Why checksum?
+A: Filename can change; SHA-256 identifies exact bytes for idempotent ingestion.
+Q: Why wait for file stability?
+A: A poll can see a file while it is still being copied.
+Q: What is TypedDict?
+A: Python typing for dictionary keys; it is not automatic runtime validation.
+Q: Why translation before parsing?
+A: A common language simplifies downstream prompts and reference comparisons.
+Q: Does confidence 1.0 prove correctness?
+A: No. Some paths set it heuristically, and model confidence is not calibrated.
+Q: What is LangGraph state?
+A: Shared data flowing through ordered/conditional processing nodes.
+Q: What if ADK fails?
+A: A deterministic MCP-tool path or in-graph translator can run; inspect executor.
+Q: Is all processing asynchronous?
+A: No. The API handlers and watchdog pipeline are mostly synchronous; the watcher
+   uses a background daemon thread and the ADK/session helper has async bridging.
+Q: Why keep source text if parsed JSON exists?
+A: Audit traceability and derived RAG recovery need original evidence.
+
+15. YOUR TWO-MINUTE PRESENTATION
+---------------------------------
+"Mera module document ingestion aur orchestration handle karta hai. Watchdog
+incoming folder ko poll karta hai, file stability check karta hai aur SHA-256
+checksum se duplicates skip karta hai. Digital PDF se text direct extract hota
+hai; scanned PDF aur images ke liye Tesseract OCR use hota hai. DOCX ke tables
+bhi read hote hain. Translation normally A2A ke through Google ADK translation
+agent ko delegate hoti hai, jo lang_bridge MCP tool use karta hai. Parsed output
+InvoiceState mein header aur line items banata hai. LangGraph is state ko
+validation, reporting aur risk gate tak le jata hai. Low-risk approved invoices
+index hote hain; baaki human review ke liye rukte hain. Local fallback available
+hai, lekin usko live Bedrock translation ka proof nahi bolte."
+
+STUDY CHECKLIST
+[ ] Explain the entire graph without reading.
+[ ] Trace one real filename through extractor, translator and parser.
+[ ] Distinguish checksum, invoice_id and thread_id.
+[ ] Show OCR/direct-text routing and sidecar metadata.
+[ ] State clearly which fallback/executor ran in the demo.

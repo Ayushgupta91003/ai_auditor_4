@@ -1,0 +1,39 @@
+RULES.YAML - SETTINGS, PYTHON FUNCTIONS NAHI
+============================================
+Source path:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\config\rules.yaml
+
+YAML configuration file hai. Ismein functions nahi; settings/thresholds hain.
+Tere do primary sections: responsible_ai aur risk_scoring.
+
+responsible_ai
+block_prompt_injection: query instruction-override blocking switch.
+enforce_scope: configured out-of-scope checks enable/disable.
+strip_secrets: supported secret patterns remove karna.
+redact_pii_in_answers: answer ke supported PII patterns mask karna.
+redact_pii_in_reports: report redaction; current value FALSE hai.
+enforce_groundedness: answer/context support check enable/disable.
+min_groundedness: lexical answer support floor, current 0.30.
+financial_disclaimer: selected financial answer wording par advisory notice.
+max_document_chars: 200000 character cap.
+max_query_chars: 2000 character cap.
+
+risk_scoring
+auto_approve_threshold: default 0.30.
+low_translation_confidence: default confidence boundary 0.75.
+severity_weights: finding category ka weight.
+weights: additional data-error/confidence weights.
+hard_blocks: reject recommendation, critical finding, invalid currency,
+missing mandatory header jaise review-forcing conditions.
+
+THREE NUMBERS KO MIX MAT KARNA
+Risk threshold 0.30: index/review routing.
+Answer grounding floor 0.30: lexical context support.
+RAG triad >0.70: separate RAG quality gate, another part's pipeline.
+
+Configuration cache hoti hai. YAML file edit karna automatically live hot reload
+prove nahi karta; current guards apna config cache bhi rakhte hain.
+
+VIVA LINE
+"Policy settings YAML mein hain; Python functions in settings ko read karke
+actual checks aur routing apply karte hain."

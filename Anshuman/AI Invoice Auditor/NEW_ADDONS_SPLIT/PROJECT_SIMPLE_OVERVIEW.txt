@@ -1,0 +1,132 @@
+AI INVOICE AUDITOR - SIMPLE PROJECT OVERVIEW
+============================================
+
+1. THE PROBLEM
+---------------
+A logistics company receives invoices from different vendors. Some are digital
+PDFs or Word documents; others are scanned images. They can also be written in
+different languages.
+
+An auditor must read each invoice, identify what was billed, and compare it with
+the company's approved purchase order and vendor records. Missing information,
+wrong quantities, unexpected prices or currency mismatches need attention.
+Doing this manually takes time and becomes harder as invoice volume increases.
+
+Our problem statement is:
+How can we automate invoice preparation and checking while keeping a human
+auditor responsible for the final review decision?
+
+2. OUR IMPLEMENTED SOLUTION
+----------------------------
+We built an invoice-auditing application that reads documents from an incoming
+folder, extracts their contents, handles translation and structured parsing,
+checks the extracted values against configurable rules and ERP reference data,
+and produces an audit report.
+
+The auditor uses a Streamlit dashboard to inspect findings, correct information,
+revalidate it, and approve or reject a record. The application also supports
+questions answered from indexed invoice evidence.
+
+It recommends and records review outcomes. It does not make a bank payment.
+
+3. HOW ONE INVOICE MOVES THROUGH THE SYSTEM
+--------------------------------------------
+Step 1 - Detect the document.
+A background watcher monitors the incoming folder. It checks file stability
+and calculates a checksum to avoid processing identical file contents again.
+
+Step 2 - Extract the text.
+Digital documents use direct text extraction. Scans use OCR, which converts
+image pixels into text. Source text is retained for inspection and later use.
+
+Step 3 - Translate and identify fields.
+The translation capability handles non-English content. The parser identifies
+fields such as invoice number, vendor, purchase order, currency, quantities,
+unit prices and totals.
+
+Step 4 - Validate the invoice.
+The system checks required information and arithmetic, then compares billed
+values with approved ERP records, normally obtained through the mock ERP API.
+Differences become findings containing the invoice value and reference value.
+
+Step 5 - Report and route for review.
+The system generates JSON/HTML reports and stores the audit data. A rule-based
+risk score routes the normal workflow: auto-approved invoices can be indexed;
+pending cases wait for a human decision.
+
+Step 6 - Let the auditor act.
+The auditor can edit current information and revalidate it. Approval requests
+indexing; rejection records the review decision. Feedback records explain the
+changes, although this version does not preserve every full report version.
+
+4. A SIMPLE EXAMPLE
+---------------------
+Suppose a purchase order approves 10 items at a unit price of 100, but the
+invoice bills 10 items at 120. The invoice may add up correctly, yet its price
+differs from the approved reference by 20%.
+
+The system identifies the difference, records a finding and applies the review
+policy. The auditor then checks the evidence and decides the next action.
+This is an illustrative example, not a claim about a particular supplied file.
+
+5. HOW QUESTIONS ABOUT INVOICES ARE ANSWERED
+---------------------------------------------
+RAG means retrieving relevant evidence before generating an answer.
+The system turns invoice text and audit information into searchable chunks.
+For a question such as 'Why was this invoice flagged?', it retrieves relevant
+chunks, ranks them, generates an answer and evaluates the answer's relevance
+and support in the evidence. Guardrails can block unsafe or unsupported output.
+
+The normal workflow indexes auto-approved or explicitly approved evidence.
+A pending invoice may therefore have no searchable evidence yet.
+
+6. WHAT THE MAIN TECHNOLOGIES DO
+---------------------------------
+LangGraph: coordinates the invoice-processing and question-answering steps.
+Google ADK: provides translation/business-validation agent execution when usable.
+A2A: our custom message/task layer delegates skills between agent roles.
+MCP: our custom tool layer exposes named capabilities for discovery and calls.
+AWS Bedrock through LiteLLM: intended model/embedding route when configured.
+RAI guardrails: inspect selected inputs/outputs for injection, secrets, PII and
+unsupported answers.
+Langfuse: helps inspect execution through traces, spans and scores when enabled.
+Streamlit: the auditor-facing dashboard.
+
+Six Docker services run the application: agent, mock ERP, Streamlit UI,
+PostgreSQL, Qdrant and Redis. Agent roles live inside the agent service; each
+role does not require its own container.
+
+PostgreSQL stores the main audit/reference data and feedback. Qdrant stores
+derived search vectors. Redis caches results that can be recomputed.
+
+7. WHAT WE ADDED OVER THE PREVIOUS PROJECT SCOPE
+-------------------------------------------------
+The basic extraction, validation, RAG, dashboard and Docker stack already
+belonged to the earlier specification. The main additions are cross-framework
+ADK/A2A delegation, discoverable MCP tools, explicit Responsible AI controls
+and Langfuse observability. Risk-gated indexing and the working optional
+revalidation loop further extend the review workflow.
+
+8. WHAT TO KEEP IN MIND
+------------------------
+This explanation describes the current Anshuman project. Its MCP/A2A layers
+are custom, with in-process dispatch by default and configurable HTTP paths.
+The code has deterministic fallbacks when models/frameworks are unavailable;
+an operational dashboard alone does not prove live Bedrock or ADK execution.
+In particular, the local non-English fallback is passthrough, not real translation.
+
+The practical value is helping the auditor prepare evidence, detect mismatches
+and investigate them faster, while retaining a human review boundary. Actual
+time savings and model accuracy still need measured test results.
+
+ONE-MINUTE EXPLANATION
+-----------------------
+Our AI Invoice Auditor helps a company check vendor invoices against approved
+purchase orders. It reads multilingual documents, extracts and structures the
+information, checks missing fields and arithmetic, and identifies ERP mismatches.
+It creates reports and gives the auditor a dashboard to inspect, correct and
+review the results. It also answers questions using saved invoice evidence.
+LangGraph coordinates the workflow, ADK/A2A separates agent capabilities, MCP
+provides shared tools, and guardrails plus tracing help make the process safer
+and easier to inspect. The system supports a human decision; it does not replace
+financial accountability.

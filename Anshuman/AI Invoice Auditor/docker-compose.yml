@@ -1,0 +1,176 @@
+# AI Invoice Auditor — full stack (agent, mock-erp, streamlit-ui, postgres, qdrant, redis)
+# Bring up with:  docker compose up --build -d
+# All secrets are supplied via the .env file (see .env.example). None are baked into images.
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL 16 — durable system of record (erp, audit, langgraph schemas)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: invoice_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Schema + ERP master data load automatically on first start (single-command requirement).
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - auditor_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 2. Qdrant — vector database for the RAG index (derived, rebuildable store)
+  # ----------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: invoice_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - auditor_net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 3. Redis — ephemeral cache for translation / LLM responses (no volume by design)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7
+    container_name: invoice_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - auditor_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 4. Mock ERP — FastAPI lookup service over the PostgreSQL erp schema
+  # ----------------------------------------------------------------------------
+  mock-erp:
+    build:
+      context: .
+      dockerfile: services/mock_erp/Dockerfile
+    image: invoice-mock-erp:1.0
+    container_name: invoice_mock_erp
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - auditor_net
+
+  # ----------------------------------------------------------------------------
+  # 5. Agent — LangGraph workflow: monitor, extract, translate, validate, report, RAG
+  # ----------------------------------------------------------------------------
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    image: invoice-agent:1.0
+    container_name: invoice_agent
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MOCK_ERP_URL: http://mock-erp:8000
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      RULES_PATH: /app/config/rules.yaml
+      PROMPTS_PATH: /app/config/prompts.yaml
+      INCOMING_DIR: /app/data/incoming
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION_NAME: ${AWS_REGION_NAME:-us-east-1}
+      BEDROCK_MODEL: ${BEDROCK_MODEL:-bedrock/amazon.nova-lite-v1:0}
+      EMBED_MODEL: ${EMBED_MODEL:-bedrock/amazon.titan-embed-text-v2:0}
+      # Observability (LangFuse). Leave the keys empty to trace to structured logs only.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      # Must match the LangFuse data region the keys belong to.
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+      # MCP / A2A transports. Empty means in-process dispatch inside this container.
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      A2A_BASE_URL: ${A2A_BASE_URL:-}
+      ADK_ENABLED: ${ADK_ENABLED:-true}
+      # Refuse to start if PostgreSQL or mock-erp cannot be reached.
+      STRICT_STARTUP: ${STRICT_STARTUP:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/incoming:/app/data/incoming
+      - ./outputs/reports:/app/outputs/reports
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-erp:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - auditor_net
+
+  # ----------------------------------------------------------------------------
+  # 6. Streamlit UI — human-in-the-loop auditor dashboard
+  # ----------------------------------------------------------------------------
+  streamlit-ui:
+    build:
+      context: .
+      dockerfile: services/streamlit_ui/Dockerfile
+    image: invoice-streamlit-ui:1.0
+    container_name: invoice_streamlit_ui
+    restart: unless-stopped
+    environment:
+      AGENT_URL: http://agent:8000
+      MOCK_ERP_URL: http://mock-erp:8000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    ports:
+      - "8501:8501"
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - auditor_net
+
+# ------------------------------------------------------------------------------
+# Networks & durable volumes
+# ------------------------------------------------------------------------------
+networks:
+  auditor_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  qdrant_data:
+    driver: local

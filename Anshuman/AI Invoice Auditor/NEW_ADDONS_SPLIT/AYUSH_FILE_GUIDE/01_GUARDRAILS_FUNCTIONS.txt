@@ -1,0 +1,80 @@
+GUARDRAILS.PY - HIGH-LEVEL FUNCTION GUIDE
+========================================
+Source path:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\utils\guardrails.py
+
+FILE KA KAAM
+Untrusted document/query aur outgoing answer par selected safety checks.
+Tere liye sabse important: scan_document, scan_user_query, scan_answer.
+
+RESULT OBJECT
+GuardrailResult mein text, allowed, findings aur blocked_reason hote hain.
+Caller ko result actually apply karna padta hai; naam se safety automatic nahi.
+
+FUNCTIONS / PROPERTIES
+
+_tokens() [line 96]
+  Text ko lowercase meaningful word tokens mein todta hai; common stopwords remove karta hai. Grounding comparison ka helper.
+
+GuardrailResult.triggered [line 109]
+  Property: findings list nonempty hai toh True. Matlab koi control trigger hua.
+
+GuardrailResult.as_dict [line 112]
+  allowed, blocked_reason aur findings ko dictionary mein deta hai. Is dictionary mein text field include nahi hota.
+
+RAIGuardrails.__init__ [line 121]
+  RAI configuration cache ko initialize karta hai.
+
+RAIGuardrails.config [line 126]
+  Property: rules.yaml ka responsible_ai section load/cache karti hai. Load failure par default configuration use hoti hai.
+
+RAIGuardrails._flag [line 135]
+  Ek policy switch read karta hai, jaise block_prompt_injection enabled hai ya nahi.
+
+RAIGuardrails.redact_pii [line 139]
+  Supported email/phone/card/IBAN jaise patterns mask karta hai; updated text aur findings return karta hai.
+
+RAIGuardrails.strip_secrets [line 148]
+  Supported credential/password/connection-string patterns ko [SECRET_REDACTED] se replace karta hai.
+
+RAIGuardrails.detect_injection [line 157]
+  Ignore previous instructions jaise patterns detect karke findings deta hai. Khud se query block nahi karta; caller decision leta hai.
+
+RAIGuardrails.detect_out_of_scope [line 165]
+  Configured medical/legal/investment/security-abuse patterns detect karta hai. Har unrelated sentence ko catch karne ki guarantee nahi.
+
+RAIGuardrails.groundedness [line 173]
+  Answer ke meaningful tokens mein se kitne context mein present hain, unka ratio deta hai. Lexical estimate hai, truth proof nahi.
+
+RAIGuardrails.scan_document [line 181]
+  Document size cap aur secret scan karta hai. Injection mile toh untrusted-content warning/fence lagata hai; document ko automatically discard nahi karta.
+
+RAIGuardrails.scan_user_query [line 208]
+  Empty/oversized query, override patterns aur configured scope check karta hai. Unsafe query ko allowed=False aur refusal de sakta hai.
+
+RAIGuardrails.scan_answer [line 252]
+  Answer par secret/PII controls aur context-based grounding floor check karta hai. Low support par refusal; relevant financial wording par disclaimer add kar sakta hai.
+
+RAIGuardrails.scan_report [line 281]
+  Selected report text ka optional PII scan. Current rules mein redact_pii_in_reports=false hai, isliye default active report-redaction claim mat karna.
+
+RAIGuardrails._record [line 292]
+  Triggered finding/blocked outcome logs karta hai aur available Langfuse span mein record karne ki koshish karta hai.
+
+FLOW YAAD KARO
+scan_document -> document ko data ki tarah inspect/fence.
+scan_user_query -> unsafe override ko block kar sakta hai.
+scan_answer -> output support/privacy checks, zarurat par refusal.
+
+Examples:
+Document: "Ignore previous instructions" -> suspicious data flag/fence.
+Query: same override -> configured query gate block kar sakta hai.
+Answer: context support kam -> grounding refusal ho sakta hai.
+
+VIVA LINE
+"Helpers patterns detect/transform karte hain; scan functions actual boundary
+policy apply karte hain. Yeh regex/lexical application controls hain, perfect
+safety ya AWS managed Bedrock Guardrails ka claim nahi."
+
+Notes: @property ko attribute ki tarah access karte hain, normal function call
+ki tarah parentheses nahi lagate. Line numbers current inspected copy ke hain.

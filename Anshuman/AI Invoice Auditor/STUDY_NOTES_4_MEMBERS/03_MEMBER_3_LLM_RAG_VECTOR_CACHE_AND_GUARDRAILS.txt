@@ -1,0 +1,309 @@
+MEMBER 3 - LLM, AGENTIC RAG, VECTOR SEARCH, CACHE AND GUARDRAILS
+==============================================================
+
+REFERENCE AND DIVISION
+Study scope: Anshuman/AI Invoice Auditor, not the older Groq project.
+Member 1 prepares invoice evidence. Member 2 validates/persists it. Your part
+turns approved evidence into searchable knowledge and answers auditor questions.
+Member 4 integrates your endpoints into Streamlit and demonstrates review.
+See 05_ARCHITECTURE_EXPLAINED.txt for the complete system.
+
+1. YOUR MODULE IN ONE SENTENCE
+-------------------------------
+"Mera module stored invoice evidence ko chunks aur embeddings mein convert
+karke relevant context retrieve karta hai; usi context se answer banata hai,
+quality evaluate karta hai aur unsafe/unsupported output ko guard karta hai."
+
+2. READING ORDER
+-----------------
+services/agent/utils/llm_client.py: model routing and deterministic fallbacks.
+services/agent/utils/cache.py: ResponseCache and make_key().
+services/agent/utils/vector_store.py: active shared VectorStore implementation.
+services/agent/tools/rag_tools.py: six discoverable RAG tools.
+services/agent/rag/state.py: the question-processing state dictionary.
+services/agent/rag/agents.py: five conceptual RAG roles and helpers.
+services/agent/rag/pipeline.py: active graph, retry route, public API functions.
+services/agent/utils/guardrails.py: Responsible AI input/output controls.
+config/rules.yaml -> rag and responsible_ai sections.
+config/prompts.yaml -> generation, reflection and refinement prompts.
+
+IMPORTANT: services/agent/graph/nodes/rag.py is an older parallel implementation.
+main.py and graph/workflow.py import services/agent/rag/pipeline.py, so that
+package is the active path to explain. Similar filenames do not mean both run.
+
+3. RAG BASICS WITH A REAL AUDITOR QUESTION
+------------------------------------------
+RAG = Retrieval-Augmented Generation.
+Suppose an auditor asks: 'Why was this invoice flagged for price mismatch?'
+The model should not answer only from its pretrained knowledge. Retrieval
+finds the invoice text/audit findings, augmentation assembles that evidence,
+generation writes the answer and reflection evaluates it.
+
+Indexing happens before questions; it prepares the corpus. Five roles are:
+Indexing, Retrieval, Augmentation, Generation, Reflection.
+They are role functions in a LangGraph workflow, not five extra containers
+or five independent paid model accounts.
+
+4. WHAT IS ACTUALLY INDEXED?
+-----------------------------
+build_documents(record) builds documents from:
+  invoice_text: saved raw text.
+  invoice_translation: translated text when different from source.
+  audit_summary: structured header, line, findings and review facts in prose.
+  audit_report: JSON report read from record.report_json_path if available.
+
+The summary is important: source PDFs do not naturally contain the later audit
+verdict. A question about review status needs the persisted audit outcome.
+Report-path enrichment is conditional; the DB schema does not independently
+guarantee that this optional report path exists in every rebuilt record.
+Core raw/translated/summary evidence can still be rebuilt from stored data.
+
+Normal workflow indexes only after the risk gate returns auto_approved.
+Pending-review invoices normally need explicit Approve & Index in the UI.
+Rebuild defaults to review_status in {auto_approved, approved}.
+This is a workflow policy, not a universally enforced authorization boundary:
+the direct /rag/index/{invoice_id} route can request indexing explicitly.
+
+5. INDEXING CALL CHAIN
+-----------------------
+indexing_node(state)
+  -> indexing_agent(invoice_id, optional record)
+  -> audit_db.get_invoice_details() if record is absent
+  -> build_documents()
+  -> mcp_client.call('vector_indexer', invoice_id, documents, metadata)
+  -> chunk text, embed chunks, upsert Qdrant points.
+
+Chunking default: 900 characters with overlap 150 characters.
+These are character counts, not model-token counts.
+Overlap preserves context across a chunk boundary. Excessive overlap creates
+redundancy, which is why reranking also attempts near-duplicate filtering.
+
+Payload carries document type and invoice identifiers/metadata. Deterministic
+UUID-based point IDs let reindexing overwrite known chunks instead of generating
+new unrelated IDs every time. Inspect deletion/reindex logic for removed chunks
+before claiming every stale chunk is always eliminated in every failure mode.
+
+6. EMBEDDINGS AND QDRANT
+-------------------------
+An embedding is a numerical vector describing text for similarity search.
+Qdrant stores vectors plus metadata. Cosine similarity compares their direction.
+This index is derived; PostgreSQL remains the principal evidence store.
+
+utils/vector_store.py connects to QDRANT_URL and uses configured collection
+invoice_audit_chunks. It probes embedding size from the active embedder.
+It creates keyword payload indexes for invoice_id, invoice_number and doc_type.
+If existing collection dimensions differ, the code may delete/recreate that
+derived collection. A model change can therefore require reindexing all approved
+records; mixed vector dimensions are not compatible.
+
+When Qdrant cannot be used, an in-process fallback dictionary/search can run.
+That dictionary is not durable and does not prove real Qdrant search succeeded.
+Inspect /health, /health/dependencies and /rag/stats for backend details.
+
+7. ACTUAL BEDROCK WRAPPER - DIFFERENT FROM OLD PROJECT
+------------------------------------------------------
+LLMClient reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME,
+BEDROCK_MODEL and EMBED_MODEL. Region fallback also reads AWS_DEFAULT_REGION.
+Default model strings are bedrock/amazon.nova-lite-v1:0 and
+bedrock/amazon.titan-embed-text-v2:0, used through LiteLLM.
+
+completion() calls litellm.completion(); embed() calls litellm.embedding().
+This source does NOT initialize langchain_aws.ChatBedrockConverse.
+Do not state that it satisfies the earlier exact initialization requirement
+without a code change. These study notes make no application changes.
+
+has_aws is true only if non-placeholder access key AND secret key strings are
+present. This check is not the full automatic AWS credential-provider chain.
+A lab role that works in another program does not automatically make this flag
+true. Docker Compose does not explicitly forward AWS_SESSION_TOKEN either.
+If your Nuvepro session works, inspect which mode actually executed rather than
+assuming a successful UI means live Bedrock was invoked.
+
+On Bedrock call failure, the wrapper logs a warning and uses local handlers.
+This is graceful degradation, but it can hide a failed model dependency from a
+casual demo. Do not call local fallback success a live model entitlement test.
+
+8. DETERMINISTIC LOCAL HANDLERS
+--------------------------------
+Translation: simple language detection and verbatim text passthrough.
+  English confidence 1.0; non-English confidence 0.0. No real English translation.
+Parsing: regex extraction from actual input text, not an external model.
+Generation: extractive answer from retrieved context.
+Triad: lexical-overlap estimates.
+Embeddings: hashed bag-of-token vector, default LOCAL_EMBED_DIM 384, normalized.
+
+Fallback is not Groq. There is no Groq provider in this friend's wrapper.
+Do not reuse the old project's Groq key UI/run instructions.
+Fallback regexes can miss normal invoice layouts. Existing exported reports
+with null currency or unexpected three-letter codes illustrate why a valid
+execution is not automatically an accurate extraction.
+
+9. QUERY WORKFLOW AND RAGSTATE
+-------------------------------
+main.py POST /rag/query -> query_rag_with_triad().
+First scan_user_query() can reject injection/out-of-scope requests.
+Then initialize state with original query, search_query, optional invoice_id,
+attempt=1, max_retries, history, best_attempt and evidence/answer fields.
+
+retrieval -> augmentation -> generation -> reflection
+                                  ^               |
+                           retry via refine -> retrieval
+                                  or finalize -> END.
+
+The original question and search_query are different. Refinement changes only
+the search string. generation_agent() still answers the original user question,
+so the task does not drift to a different question during retries.
+
+RAGState fields include retrieved_chunks, ranked_chunks, context, answer,
+answer_cached, average_score, passed, critique, history, best_attempt,
+blocked/guardrail/error. A TypedDict describes this shape; it is not an SQL row.
+
+10. RETRIEVAL AND AUGMENTATION
+-------------------------------
+semantic_retriever embeds the search query and retrieves candidates.
+Default top_k is 12. Optional invoice_id narrows scope.
+chunk_ranker keeps rerank_top_n=5 after scoring and deduplication.
+
+Current rerank formula is deterministic:
+  0.55 * vector_score + 0.30 * lexical_overlap + 0.15 * identifier_match.
+Identifiers such as INV-, PO-, VEND- and SKU- receive exact-match relevance.
+This is not a separate learned cross-encoder reranking service.
+Chunks with very high token overlap are skipped as near duplicates.
+Context includes invoice/source metadata, score and evidence text.
+
+11. GENERATION AND CACHE
+--------------------------
+response_synthesizer renders the configured prompt with query and context.
+It requests completion at temperature 0.0 and scans the answer with guardrails.
+The response can include raw_answer, final answer, cached and guardrail findings.
+
+The answer cache key includes model, query and context. Context changes tend to
+produce different keys. That does not equal a formal corpus-wide revisioned
+cache invalidation scheme; stale vectors can still yield stale context.
+
+ResponseCache normally uses Redis. Default TTL is 604800 seconds (seven days).
+When Redis fails it switches to a bounded OrderedDict, default 512 entries.
+The in-memory fallback is bounded by entries but does not reproduce Redis TTL
+expiry in its get/set implementation. Describe this distinction accurately.
+Cache hit means reused computed output, not newly verified reasoning.
+
+12. REFLECTION: THE TRIAD
+--------------------------
+Context relevance: is retrieved evidence relevant to the question?
+Groundedness: are answer claims supported by that evidence?
+Answer relevance: does the response address the original question?
+Average = (context relevance + groundedness + answer relevance) / 3.
+Pass condition is average_score > 0.70, strictly greater.
+Exactly 0.70 fails. Metrics are model/heuristic quality estimates, not proof.
+
+rag_evaluator calls the model prompt. If parsing fails it computes lexical
+metrics. This local scoring is transparent but can reward repeated words
+without proving financial correctness. Numerical comparison belongs to Member 2.
+
+13. RETRY COUNT - IMPORTANT EXAM DETAIL
+---------------------------------------
+Configuration calls the field max_retries=3. Actual state starts attempt=1 and
+_should_retry() ends when attempt >= max_retries. Thus the default implementation
+allows up to THREE TOTAL ATTEMPTS, not initial attempt plus three additional
+retries. The API reports retries_used as attempts-1.
+It can stop sooner when a passing answer is found or no chunks were retrieved.
+Query refinement cannot create evidence for an invoice that has never been indexed.
+
+Reflection records each attempt and retains the highest-scoring answer.
+On failure finalize() returns that best answer with a quality-gate-not-met
+warning, then runs output guardrails. It is not always an unconditional refusal;
+guardrails may replace an unsupported answer with one.
+The final sources/context may reflect the latest retrieval even when an earlier
+best answer is selected. Do not claim perfect best-attempt provenance without
+checking that alignment.
+
+14. GUARDRAILS: FOUR TRUST BOUNDARIES
+--------------------------------------
+scan_document(): length cap (default 200000 chars), secret stripping, injection
+detection/fencing. Suspicious document content is still audited as untrusted
+data so an attacker cannot evade audit merely by inserting hostile text.
+
+scan_user_query(): cap 2000 chars, injection detection, configured scope checks,
+secret stripping. It can return a blocked response before retrieval.
+
+scan_answer(): secret stripping, PII redaction, lexical grounding floor (0.30),
+refusal replacement where required, and a human-accountability disclaimer on
+some financial decision language.
+
+scan_report(): optional free-text redaction, disabled by current
+redact_pii_in_reports=false configuration. Tool declarations annotate guardrails,
+but a metadata annotation alone is not enforcement. Look for actual scan calls.
+These are application regex/lexical controls, not automatic AWS Bedrock Guardrails.
+Do not claim they detect every injection or eliminate every hallucination.
+
+15. REBUILD AND HUMAN-REVIEW POLICY
+------------------------------------
+POST /rag/rebuild iterates persisted invoices, filters approved/auto-approved
+statuses by default and indexes stored text/summary again. This recovers a
+derived index without rerunning OCR. Optional report enrichment may need an
+existing report JSON file, so qualify the 'PostgreSQL-only full report text'
+claim. A DB summary/raw-text rebuild is supported.
+
+Do not run destructive volume-reset tests against the group's working lab data.
+Also understand that reject merely records a decision in main.py; it does not
+explicitly delete previously indexed vectors. Rejected-new-invoice gating and
+revocation of already indexed evidence are different cases.
+
+16. YOUR DEMONSTRATION
+-----------------------
+1. Start with a known auto-approved or explicitly approved invoice.
+2. Show /rag/stats backend and chunk count.
+3. Ask a concrete scoped question about its PO or mismatch.
+4. Show sources, three triad metrics, average and attempts/history.
+5. Repeat the same query/context and inspect cached=true when applicable.
+6. Ask an instruction-override query and a clearly unrelated prohibited-scope
+   query; explain blocked versus low-quality versus empty-index responses.
+7. Ask about a pending-review invoice. An empty approved corpus is an expected
+   reason for no evidence, not necessarily a broken vector database.
+
+Suggested questions: 'What is the purchase order number for this invoice?',
+'Which unit price differs from the ERP?', 'What currency is this invoice in?'.
+Do not assume these questions route to fixed SQL: this version's question path
+is RAG; it has no equivalent of the old project's fixed total/count SQL router.
+
+17. VIVA ANSWERS
+-----------------
+Q: Why not put everything in the prompt?
+A: Retrieval selects relevant evidence within a bounded context window.
+Q: Why overlap chunks?
+A: Preserve meaning across a split; reranking/dedup reduces redundancy.
+Q: Why Qdrant and PostgreSQL both?
+A: PostgreSQL stores business evidence; Qdrant supports similarity search.
+Q: Is a vector score an approval decision?
+A: No, it measures retrieval similarity, not whether a billed price is allowed.
+Q: Why use Redis?
+A: Repeated model/translation work costs time; cached results are recomputable.
+Q: Is the reranker another LLM?
+A: Here it is a weighted vector/lexical/identifier scoring function.
+Q: Does local fallback translate German?
+A: No. It preserves original text and reports zero translation confidence.
+Q: Is three retries four attempts?
+A: Not in this implementation: default three total attempts.
+Q: Is the system using ChatBedrockConverse?
+A: No, this wrapper uses LiteLLM Bedrock calls directly.
+
+18. TWO-MINUTE SPEECH
+----------------------
+"Mera module evidence-based question answering handle karta hai. Approved
+invoice ka raw text, translation aur audit summary chunks mein split hota hai,
+embeddings bante hain aur Qdrant mein store hote hain. Query ke time relevant
+chunks retrieve karte hain, vector/lexical/identifier score se rerank karte hain,
+phir context-based answer generate karte hain. Reflection context relevance,
+groundedness aur answer relevance evaluate karta hai; average 0.70 se greater
+hona chahiye. Failed attempts par query refine hoti hai, default maximum three
+attempts. Redis repeated results cache karta hai. Guardrails query injection,
+PII/secrets aur unsupported answers handle karte hain. Live Bedrock aur local
+deterministic fallback alag modes hain; demo mein actual backend identify karna
+zaroori hai."
+
+STUDY CHECKLIST
+[ ] Calculate a sample rerank score and triad average.
+[ ] Explain 900/150/12/5/0.70/3 without confusing their units.
+[ ] Trace an approved record through indexing and one question through retrieval.
+[ ] Identify live Bedrock versus local fallback and active versus legacy RAG file.
+[ ] Explain why low-quality best-effort output is not a passing answer.

@@ -1,0 +1,208 @@
+PART 4 - PARAM SRIVASTAVA (1458240)
+NEW ADDITION: LANGFUSE OBSERVABILITY + REVIEW EXTENSION EVIDENCE
+===============================================================
+
+1. WHAT IS NEW OVER LAST MONTH?
+--------------------------------
+Old spec already demanded audit persistence, logs, reliability and a dashboard.
+It did NOT explicitly require Langfuse trace/span/score instrumentation.
+Newer spec page 2 requirement 15 and page 3 architecture add this visibility.
+Your main new responsibility is showing HOW a result was produced and where
+an agent/tool/model interaction failed or degraded.
+
+Secondary responsibility: explain the completed edit/revalidate/decision loop
+as an implemented optional extension. Old PDF page 3 already mentioned human
+correction and marked revalidation 'Need not be implemented!'. Therefore this
+is beyond the waived minimum, not a previously absent human-review concept.
+
+2. FILES TO READ
+-----------------
+services/agent/utils/observability.py: tracing facade, clients and context.
+services/agent/main.py: /observability/test, health and review endpoints.
+services/agent/graph/workflow.py: invoice.audit trace and delegated node spans.
+services/agent/rag/pipeline.py: rag.query trace and triad scores.
+services/agent/tools/registry.py: tool call spans.
+services/agent/mcp_server/server.py: MCP dispatch spans.
+services/agent/adk_agents/base.py: ADK execution spans.
+services/streamlit_ui/app.py: system view, review queue and actions.
+services/agent/utils/db.py: feedback/decision persistence and upserts.
+docker-compose.yml: runtime Langfuse endpoint/key settings, no extra container.
+
+3. TRACE, SPAN, GENERATION AND SCORE
+------------------------------------
+Trace: one logical run, such as an invoice audit or RAG question.
+Span: one step inside that run, such as MCP invocation or retrieval.
+Generation: a model-generation observation with model/prompt/output metadata.
+Score: an attached metric, such as context_relevance or average triad score.
+Session/user/tag metadata helps group related operations; it is not an
+authenticated employee identity or guaranteed durable business state.
+
+Audit database answers 'what invoice/result was stored?'
+Observability answers 'which path ran, how long, what failed, what was reused?'
+Neither replaces the other. A nice trace is not proof the numerical audit was
+correct or that required source data was complete.
+
+4. OBSERVABILITY FACADE
+------------------------
+get_client() reads configured Langfuse public/secret keys and base URL/host,
+initializes a compatible SDK client and tracks initialization status/errors.
+status() exposes flags and API mode without requiring a secret-value display.
+trace(), span(), record_generation() and observe() isolate calling modules
+from differences in SDK interfaces.
+
+Modern SDK path uses current observation contexts. Legacy path can track
+parents with ContextVar and explicit trace/span objects. _TraceRecorder and
+_SpanRecorder let callers set outputs/failures; trace recorder can attach scores.
+_flush() helps export queued observations.
+If unconfigured/unavailable, operations can degrade to structured logs.
+Successful application processing therefore does not prove cloud export.
+
+5. TRACE HIERARCHY TO DRAW
+---------------------------
+invoice.audit
+  node:translation
+    adk:translation-agent:translate_invoice
+      mcp:tools/call:lang_bridge
+        tool:lang_bridge
+  node:business_validation
+    adk:business-validation-agent:validate_against_erp
+      tool:business_validation
+
+rag.query
+  agent:retrieval -> agent:augmentation -> agent:generation -> agent:reflection
+  scores: rag_triad.context_relevance / groundedness / answer_relevance / average.
+
+This is a conceptual hierarchy from actual call sites; exact nesting depends on
+context propagation and selected execution path. Do not claim every possible
+node/model call has a generation event if it is not instrumented that way.
+
+6. CONNECTIVITY TEST VERSUS REAL MODEL EVIDENCE
+-----------------------------------------------
+POST /observability/test calls emit_test_trace():
+  trace observability.selftest
+    nested diagnostic span
+    synthetic generation model='n/a', prompt='ping', completion='pong'
+    selftest score 1.0.
+
+Its return sent=true means the export path was attempted successfully according
+to the code. Verify the observation in the configured Langfuse project too.
+This test is not a Bedrock call and its score is not RAG evaluation.
+Do not show ping/pong and claim live invoice-model token/cost tracking.
+
+Source defines record_generation(), but its explicit invocation in this code is
+the self-test; llm_client.completion() does not universally call it. Trace/span
+coverage is broader than model-generation/cost coverage. State that distinction.
+
+7. PRIVACY CHECK BEFORE SCREEN SHARING
+---------------------------------------
+trace/span helpers accept real input/output data; they may send invoice/query
+content. _truncate() limits length near 4000 characters. It is NOT redaction.
+Selected tool paths apply RAI, but there is no blanket operation-names-only
+privacy policy in this implementation.
+
+Use synthetic invoice data in screenshots. Never open .env, display actual
+AWS/Langfuse key values, or run a secret-expanded compose config on screen.
+Existing key-set booleans/status are sufficient to explain configuration.
+
+8. WORKING REVIEW EXTENSION - EXACT ORDER
+------------------------------------------
+The normal processing graph is reporter -> risk_gate -> optional indexing.
+Pending records appear in GET /review/queue and the Human Review tab.
+
+Revalidate with Edits:
+  _rebuild_state(invoice_id)
+    -> apply allowed header changes and optional full replacement line list
+    -> validator_node()
+    -> reporter_node()
+    -> compute_risk()
+    -> force review_status='pending_review'
+    -> record_correction(revalidated=True).
+
+The pasted reference PPT showed validator -> risk_gate -> reporter. Correct
+that order in the new explanation. The revalidation endpoint is not literally
+the same full eight-node graph again, and it does not perform every extra
+ADK delegation in the normal fresh-processing path.
+
+Approve & Index:
+  indexing_node -> update approved -> record_review_decision.
+Reject:
+  update rejected -> record_review_decision; no explicit removal of old vectors.
+Feedback-only:
+  INSERT feedback without applying/revalidating it.
+
+9. ORIGINAL VALUE / HISTORY CLAIM MUST BE QUALIFIED
+----------------------------------------------------
+human_feedback stores original/corrected values, reviewer, time and decisions.
+However insert_invoice_audit() upserts current extracted_raw/header values,
+line items are replaced and report files can be overwritten.
+Do not repeat 'original extraction never overwritten' or 'all report versions
+immutable' from the reference slide. Retained raw text and feedback are useful
+evidence, but not the same as append-only full extraction/report versioning.
+This is also a gap against the old spec's strong preservation requirement,
+not something to label as a successful new immutable-storage feature.
+
+10. DEMO THAT FITS YOUR PRESENTATION SLOT
+------------------------------------------
+Before class: configure the right private Langfuse project/region in the lab.
+Do not expose keys. Ensure the chosen invoice is a test record.
+
+1. Show system health/backend info and Langfuse enabled/status flags.
+2. Run the synthetic observability test and locate its trace in Langfuse.
+3. Perform one actual invoice/query action and show its nested spans/path.
+4. Identify a fallback or error if present; explain why visibility helps.
+5. Open pending review, edit a field/line and click Revalidate with Edits.
+6. Show current finding/risk updates and the separately recorded correction.
+7. Explicitly Approve & Index or Reject. Let Ayush explain risk-policy reasoning.
+
+If cloud tracing is unavailable, show structured logs and say cloud export is
+not demonstrated. Do not change that into a success claim to finish the demo.
+
+11. HOW TO EXPLAIN THE SIX-SERVICE ARCHITECTURE
+-----------------------------------------------
+The same baseline six containers remain: agent, mock-erp, streamlit-ui,
+postgres, qdrant, redis. Added agent roles, protocol layers and guardrails run
+inside the agent service. Langfuse is an external configured backend, not a
+seventh local service in this Compose file.
+
+Default MCP/A2A transport is in-process. The diagram must not imply new
+cross-container network hops for each tool when the configuration is empty.
+PostgreSQL persists business data; traces explain execution and do not replace
+it. Qdrant remains derived and Redis remains recomputable cache: these were
+already old-spec responsibilities, not your new innovation claim.
+
+12. VIVA QUESTIONS
+-------------------
+Q: How is observability different from the audit trail?
+A: Audit stores business facts/decisions; traces expose execution path/timing/errors.
+Q: What is a span?
+A: One nested operation in a larger logical trace.
+Q: Does a self-test generation prove Bedrock ran?
+A: No, its model is n/a and the data is synthetic ping/pong.
+Q: Can the app work without Langfuse?
+A: It can fall back to logs, but then cloud tracing was not demonstrated.
+Q: Is basic HITL new?
+A: No. Actual optional revalidation implementation and explicit risk-gated
+   approval controls extend the old baseline.
+Q: Is every original extraction immutable here?
+A: No. Current structured state is upserted; feedback records retain changes.
+Q: Does a successful approval always mean vectors were stored?
+A: Inspect rag_indexed/backend result; approval status alone is insufficient.
+Q: Are trace payloads automatically anonymous?
+A: No. Truncation and selective guardrails are not universal anonymization.
+
+13. TWO-MINUTE SPEECH
+----------------------
+"Mera main addition Langfuse observability hai. Audit DB result store karta hai;
+traces batate hain ki result tak kaise pahunche. Logical audit ya RAG run ek
+trace hota hai, agents/tools nested spans hote hain aur triad values scores ke
+form mein record ho sakti hain. Self-test connectivity dikhata hai, live model
+usage ka proof nahi. Iske saath humne old spec mein optional-marked revalidation
+ko working reviewer loop mein integrate kiya: edit, validate, report, risk score,
+phir explicit decision. Feedback history aur current-state updates ko alag
+samjhenge. Private payloads ko screen share ya trace mein expose karne se pehle
+inspect karna bhi important hai."
+
+DELIVERABLE / HANDOVER
+Your diagram: audit/query trace -> nested agent/tool spans -> status/scores.
+Your slide: slide 4 right; own the optional review flow on slide 5.
+Close by distinguishing four genuinely new layers from retained baseline work.

@@ -1,0 +1,340 @@
+AI INVOICE AUDITOR - ARCHITECTURE EXPLAINED FOR ALL FOUR MEMBERS
+================================================================
+
+REFERENCE
+This file describes the code at:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor
+
+The friend code is treated as the current final study project. No source code,
+private environment configuration, reports or database were changed to produce
+these notes. This is source-based explanation, not a new live Nuvepro acceptance
+certificate. The old project's 76-test result does not apply to this codebase.
+
+1. BUSINESS PROBLEM IN PLAIN LANGUAGE
+--------------------------------------
+A company receives invoices as digital PDFs, Word documents and scans in
+different languages. An auditor must identify what was billed, compare it to
+the approved purchase order, detect discrepancies and keep a review trail.
+The system automates evidence preparation and comparison, routes risky cases
+to a human and lets the auditor ask questions about approved indexed evidence.
+It does not transfer money or independently prove legal/tax compliance.
+
+One-line Hinglish explanation:
+"Document aata hai, text nikalta hai, translate/parse hota hai, ERP se match
+hota hai, report aur risk banta hai; zarurat par human decision hota hai aur
+approved evidence par RAG questions answer karta hai."
+
+2. FOUR BALANCED STUDY PARTS
+------------------------------
+Member 1 - DOCUMENT INTELLIGENCE AND ORCHESTRATION
+  watcher, extraction/OCR, sidecar metadata, translation, parser, InvoiceState,
+  LangGraph ordering/checkpoint/fallback and translation-agent business meaning.
+  Read file 01. Demo: intake + evidence + duplicate detection.
+
+Member 2 - ENTERPRISE AUDIT AND DURABLE DATA
+  ERP reference API, SQL schemas, validation/tolerances, two validation routes,
+  report generation, DB updates, discrepancy/feedback records and risk scoring.
+  Read file 02. Demo: reference comparison + hand-calculated finding/risk.
+
+Member 3 - KNOWLEDGE AND MODEL INTELLIGENCE
+  LiteLLM/Bedrock versus local handlers, five-role RAG, Qdrant, embeddings,
+  chunking/reranking, reflection, Redis and Responsible AI controls.
+  Read file 03. Demo: approved evidence question + sources + quality/fallback.
+
+Member 4 - REVIEW EXPERIENCE AND SYSTEM INTEGRATION
+  FastAPI, Streamlit, edit/revalidate/decision endpoints, custom MCP/A2A,
+  ADK framework wiring, Langfuse, Docker and group demo coordination.
+  Read file 04. Demo: review queue + protocol directory + system/trace.
+
+These are learning/presentation responsibilities. Do not fabricate which team
+member originally authored a file. Everyone should understand this architecture
+file, then master their own file and the interfaces to adjacent parts.
+
+3. SIX-SERVICE HIGH-LEVEL DIAGRAM
+---------------------------------
+
+    HUMAN AUDITOR
+          |
+          v
+    +--------------------+
+    | STREAMLIT UI       | port 8501
+    | explorer / review  |
+    | feedback / RAG     |
+    | system controls    |
+    +--------------------+
+          | HTTP API calls
+          v
+    +-------------------------------------------------------+
+    | AGENT SERVICE - FastAPI, port 8000                     |
+    |                                                       |
+    | watcher -> LangGraph audit pipeline                   |
+    | custom MCP registry/client/server                     |
+    | custom A2A agent registry/message server               |
+    | Google ADK translation/business validation             |
+    | five-role RAG graph + guardrails + observability       |
+    +-------------------------------------------------------+
+       |                |                  |            |
+       | HTTP           | SQL              | vectors    | cache
+       v                v                  v            v
+    +-----------+  +----------------+  +----------+  +---------+
+    | MOCK ERP  |  | POSTGRESQL 16  |  | QDRANT   |  | REDIS 7 |
+    | host 8001 |  | host 5432      |  | 6333     |  | 6379    |
+    | API 8000  |  | audit schema   |  | derived  |  | cached  |
+    +-----------+  | langgraph      |  | evidence |  | results |
+       | SQL       | erp schema     |  +----------+  +---------+
+       +---------->| reference data |
+                   +----------------+
+
+EXTERNAL CONNECTIONS FROM AGENT:
+  LiteLLM -> AWS Bedrock chat/embeddings, when enabled by code credentials.
+  Langfuse -> optional tracing backend, when configured and reachable.
+
+HOST BIND-MOUNTED INPUTS/OUTPUTS:
+  data/incoming -> /app/data/incoming
+  outputs/reports -> /app/outputs/reports
+  config -> /app/config (read-only bind)
+
+Internal service names resolve on auditor_net. mock-erp:8000 is an internal
+address; localhost:8001 is a mapped host address. UI and agent are separate
+services even though several agent roles share the agent container.
+
+4. CONTAINER, AGENT, TOOL, NODE - DO NOT MIX THESE TERMS
+--------------------------------------------------------
+Container: isolated runtime/service, e.g. PostgreSQL or Streamlit.
+Agent role: a named capability and decision policy, e.g. translation-agent.
+Tool: a reusable operation, e.g. lang_bridge or semantic_retriever.
+Node: a step function in a graph, e.g. parser_node or risk_gate_node.
+Protocol: rules for exchanging tool calls/tasks, here custom MCP/A2A layers.
+An agent can live in one container and call a tool in the same process.
+The number of containers does not have to equal the number of agents.
+
+5. STARTUP SEQUENCE
+--------------------
+Docker Compose starts PostgreSQL, Qdrant, Redis and mock ERP in dependency order.
+PostgreSQL runs database/init.sql on a fresh volume and seeds reference records.
+Agent image installs OCR tools and Python dependencies. Its entrypoint repairs
+bind-folder ownership, then drops to appuser through gosu for the server.
+
+FastAPI lifespan:
+  verify_dependencies() checks PostgreSQL/mock ERP as required in strict mode;
+  optional backends may be degraded;
+  bootstrap() registers tools and A2A agents;
+  get_watchdog().start() begins polling;
+  shutdown calls watchdog.stop().
+
+The UI depends on agent health. A healthy HTTP server is not a live Bedrock
+permission test. Read backend/mode details, not only the green health label.
+
+6. PATH A: NEW DOCUMENT TO AUDIT RESULT
+----------------------------------------
+1. Watchdog sees a supported file and waits for stability.
+2. SHA-256 identifies exact bytes; already audited checksums are skipped.
+3. extractor reads embedded PDF/DOCX text or runs Tesseract OCR.
+4. Optional .meta.json sidecar supplies hints such as language/subject.
+5. translation_node delegates over A2A to translation-agent.
+6. ADK runner can call lang_bridge through MCP; direct fallback exists.
+7. parser turns translated/raw text into header/line dictionaries.
+8. validator checks mandatory fields, currency, arithmetic and ERP matching.
+9. ADK business-validation-agent supplies an additional MCP validation route;
+   its findings merge with the graph validator's findings.
+10. reporter calculates status/recommendation, writes HTML/JSON, upserts audit.
+11. risk_gate assigns a weighted score and operational review status.
+12. auto_approved proceeds to indexing; pending_review ends until human action.
+
+Graph order:
+extractor -> translator -> parser -> validator -> business_validation
+          -> reporter -> risk_gate -> indexing only when auto_approved.
+
+The shared state is InvoiceState. Three identifiers have distinct jobs:
+  file_checksum: exact content deduplication.
+  invoice_id: business/audit UUID.
+  thread_id: LangGraph execution identity (constructed from filename stem).
+PostgreSQL checkpoints are attempted in langgraph schema. The code can fall
+back to no checkpointer or sequential execution; exactly-once resume is not
+guaranteed merely because a checkpoint library is installed.
+
+7. PATH B: HUMAN REVIEW AND CORRECTION
+---------------------------------------
+The dashboard loads /review/queue records with review_status=pending_review.
+A reviewer inspects evidence/findings and can edit headers and line items.
+
+Revalidate with Edits:
+  load current persisted invoice -> apply allowed edits -> validate -> reporter
+  -> compute risk -> keep pending_review -> append correction records.
+This refreshes current structured data/report output. It does not create the
+older project's immutable report-version chain.
+
+Approve & Index:
+  index requested evidence -> update approved -> record decision.
+Reject:
+  update rejected -> record decision; no automatic new indexing.
+Feedback-only form:
+  append suggestion/history without automatically applying/revalidating it.
+
+Normal risk-gate policy keeps unreviewed records out of the index. Direct index
+API access and existing stale vectors are separate edge cases; this is not a
+complete role-based authorization or revocation system.
+
+8. PATH C: APPROVED EVIDENCE TO AN ANSWER
+------------------------------------------
+Indexing prepares saved raw text, translation and structured audit summaries.
+Optional report JSON enrichment depends on a usable report path.
+vector_indexer splits into 900-character chunks with 150 overlap, embeds them
+and writes Qdrant points with invoice/source metadata.
+
+User query -> Responsible AI query scan -> retrieval -> augmentation/reranking
+  -> context-based generation -> triad reflection -> refine/retry or finalize.
+
+Defaults:
+  retrieve 12 candidates, keep up to 5 reranked chunks;
+  rerank = 0.55 vector + 0.30 lexical + 0.15 identifier match;
+  triad average must be strictly >0.70;
+  default max_retries=3 means up to three total attempts in actual loop logic.
+
+No evidence: explain no indexed matching invoice content; approval may be needed.
+No passing answer: best attempt is labelled quality-gate-not-met, then scanned
+by guardrails. This differs from always returning a strict abstention.
+Context/query-conditioned generation results and translations may be cached.
+This question route is RAG, not the earlier project's fixed SQL intent router.
+
+9. MODEL EXECUTION AND FALLBACKS
+---------------------------------
+This code calls litellm.completion and litellm.embedding with Bedrock model IDs.
+It does not initialize ChatBedrockConverse and has no Groq testing provider.
+The has_aws flag checks explicit non-placeholder access and secret key strings.
+The ADK availability check similarly requires explicit model credentials.
+Do not claim automatic lab role identity is handled merely because the AWS SDK
+could support it in another program. Session-token propagation is not explicit
+in this Compose/wrapper configuration either.
+
+On absence/failure the local handlers use language heuristics, regex parsing,
+extractive answers, lexical triad and 384-dimensional hashed token vectors.
+Foreign-language passthrough is not real translation and has confidence 0.0.
+
+Other fallbacks:
+  PostgreSQL helper -> SQLite when connection setup fails, although strict
+    startup normally refuses to run with that degraded audit dependency.
+  mock ERP -> JSON-backed reference helper when DB unavailable.
+  Qdrant -> in-process vector store/search.
+  Redis -> bounded in-process cache.
+  ADK runner -> direct MCP tool execution.
+  graph failure/unavailable library -> sequential execution.
+
+These keep demonstrations possible but change semantics/durability/quality.
+One successful response does not prove the intended external integration ran.
+
+10. MCP AND A2A DIAGRAMS
+-------------------------
+TOOL CALL:
+  role -> MCPClient -> tools/list + tools/call
+       -> custom MCP dispatch -> ToolRegistry -> handler -> structured result.
+
+AGENT DELEGATION:
+  LangGraph translation/business node -> A2AClient message/send
+       -> custom A2A server/registry -> skill handler
+       -> ADK or direct tool executor -> Task artifact -> caller.
+
+Default Compose has empty MCP_SERVER_URL/A2A_BASE_URL, so dispatch is in-process.
+HTTP interfaces are available when configured. Seven agent cards and thirteen
+tool decorators exist in inspected source; README text saying eleven is stale.
+Custom protocol surfaces are not the old project's official SDK implementations.
+Also, not all ordinary graph nodes call MCP; the active RAG agents do so.
+
+11. THREE DIFFERENT DECISIONS
+-------------------------------
+validation_status: passed / partial / failed from rules and findings.
+recommendation: approve / manual_review / reject from reporter logic.
+review_status: auto_approved / pending_review / approved / rejected from risk
+               routing and the human decision.
+
+A model translation confidence, RAG triad score, retrieval score and weighted
+risk score measure different things. None is automatically a calibrated fraud
+probability. Do not multiply/compare them as if they had identical meaning.
+
+Risk: severity weights CRITICAL1.0, ERROR0.6, WARNING0.3, INFO0.1 plus data-error
+and low-confidence weights. Threshold <=0.30 can auto-approve without hard blocks.
+Missing headers, reject recommendation, critical findings or invalid currency
+can force review. Current code's 'confidence or 1.0' expression treats 0.0 as
+1.0; Member 2's notes explain the exact caveat.
+
+12. STORAGE AND RECOVERY
+-------------------------
+PostgreSQL: principal current audit/reference data, feedback and checkpoints.
+Qdrant: retained derived vector data; rebuild from approved stored records.
+Redis: recomputable cached results; no explicit named volume in Compose.
+Bind mounts: actual invoice files, current report files and config.
+In-memory fallbacks: lost on process restart.
+
+Normal docker compose down does not erase named volumes. down -v does.
+Current audit rows can be upserted; line/discrepancy rows can be replaced.
+The feedback log is not equivalent to a full immutable report-version database.
+Losing source PDFs does not necessarily lose saved raw text, but losing the
+PostgreSQL volume loses the authoritative audit data unless separately backed up.
+
+13. OBSERVABILITY AND TRUST
+-----------------------------
+Langfuse facade traces audit/question runs, nested agents/tools, inputs/outputs,
+errors and scores. It can fall back to logs when unconfigured/unreachable.
+This version's tracing helpers may send actual payloads/prompts/completions.
+Length truncation is not redaction. Guardrails sanitize selected boundaries;
+they do not prove every trace is free of sensitive invoice information.
+
+Responsible AI controls are regex/lexical application checks: instruction
+injection, scope, secret stripping, PII redaction, groundedness floor and
+financial-disclaimer logic. They are not a guarantee against all bad content
+and are not automatically the AWS managed Guardrails product.
+
+There is no old-project bearer-auth middleware in the shown main API.
+Reviewer names are request values, not authenticated employee identities.
+Present this as an isolated capstone/teaching system, not production banking.
+
+14. WHAT TO SAY ABOUT EXISTING OUTPUT FILES
+--------------------------------------------
+outputs/reports contains saved JSON/HTML. Several saved reports show missing
+fields, reject results and non-English translation confidence 0.0. Those are
+historical artifacts and may come from fallback runs, not proof of the current
+Nuvepro environment. Do not invent successful sample outcomes from filenames.
+Your group's live lab demonstration should show actual backend/mode and result.
+No old 76-pass claim has been verified for this newly selected codebase.
+
+15. TEN-MINUTE FOUR-MEMBER PRESENTATION PLAN
+---------------------------------------------
+0:00-1:00 Member 4: business problem and six-service diagram.
+1:00-3:00 Member 1: watcher, checksum, OCR/translation/parser and state flow.
+3:00-5:00 Member 2: ERP comparison, findings, database and weighted risk.
+5:00-7:00 Member 3: approved indexing, retrieval/rerank/answer/triad/guardrails.
+7:00-9:00 Member 4: review edits, revalidation, decision, protocols and trace.
+9:00-10:00 All: one limitation each and why human accountability remains.
+
+Each member should prepare one small example, two failure scenarios and five
+viva answers from their own file. Use a test invoice, never reveal .env values,
+and do not delete the group's working data merely to get a clean demo.
+
+16. SHARED GLOSSARY
+--------------------
+OCR: image pixels to text.
+Translation: source language to another language.
+Parser: evidence text to structured fields.
+ERP/PO/SKU: enterprise reference system / purchase order / item identifier.
+Checksum: hash identifying exact source bytes.
+Idempotency: repeated same input should not create unintended duplicate effects.
+StateGraph: ordered/conditional state-processing graph.
+Checkpoint: saved execution progress, not a business approval.
+Upsert: insert or update on a unique-key conflict.
+Embedding: numeric representation of text for similarity.
+RAG: retrieve relevant evidence before generating an answer.
+Groundedness: degree to which answer is supported by supplied context.
+Cache: disposable reused computation, not the source of truth.
+MCP: named tool discovery/invocation interface.
+A2A: named agent-capability delegation interface.
+ADK: framework used to build tool-using agent execution.
+Langfuse: observation/tracing backend, not an orchestration framework.
+Human in the loop: reviewer checks/edits/decides at an explicit boundary.
+
+FINAL GROUP CHECKLIST
+[ ] Everyone can distinguish six services, seven cards and thirteen tools.
+[ ] Everyone knows the graph and review gate order.
+[ ] Nobody reuses old Groq/ChatBedrockConverse/version-history claims here.
+[ ] Actual lab model/backend mode is identified during the demo.
+[ ] Each person can explain their function names and handover data.
+[ ] Limitations are described as current source behavior, not hidden by comments.

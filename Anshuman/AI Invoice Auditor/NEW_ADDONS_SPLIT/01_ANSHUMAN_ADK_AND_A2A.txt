@@ -1,0 +1,181 @@
+PART 1 - ANSHUMAN SHUKLA (1458243)
+NEW ADDITION: GOOGLE ADK + A2A CROSS-FRAMEWORK AGENTS
+===================================================
+
+1. WHAT IS NEW OVER LAST MONTH?
+--------------------------------
+Old spec pages 9-10 described LangGraph/LangChain invoice agents. Translation,
+business validation and orchestration were already business requirements.
+The new addition is implementing some agents with GOOGLE ADK and interoperating
+through A2A instead of presenting the complete application as one framework.
+The newer spec explicitly asks this on page 2, requirements 12-13.
+
+Your explanation: 'Humne translation invent nahi ki; existing capability ko
+ADK agent banaya aur LangGraph se agent-to-agent delegation add ki.'
+
+You own the delegation and agent-execution layer, not OCR/database internals.
+Aman explains tools beneath your agents; coordinate that handoff.
+
+2. FILES TO READ IN ORDER
+--------------------------
+services/agent/bootstrap.py: register capability surface once.
+services/agent/a2a/models.py: cards, skills, messages, tasks and artifacts.
+services/agent/a2a/registry.py: A2AAgent and A2ARegistry.
+services/agent/a2a/server.py: discovery and JSON-RPC handler.
+services/agent/a2a/client.py: get_card(), send(), try_send().
+services/agent/a2a/langgraph_agents.py: five registered workflow roles.
+services/agent/adk_agents/base.py: ADKAgent, _build(), _run_adk(), execute().
+services/agent/adk_agents/translation_agent.py: TranslationAgent.
+services/agent/adk_agents/business_validation_agent.py: BusinessValidationAgent.
+services/agent/graph/workflow.py: translation_node/business_validation_node.
+
+3. THE BASICS YOU SHOULD BE ABLE TO EXPLAIN
+-------------------------------------------
+LangGraph: ordering and routing of shared state through a graph.
+Google ADK: framework for a model-driven tool-using agent/runner/session.
+A2A: exchange of requests/results for another agent's advertised skill.
+AgentCard: metadata explaining name, framework, URL, skills and capabilities.
+Skill: callable business capability, e.g. translate_invoice.
+Message: text/data parts plus context identity.
+Task: execution status and returned artifact(s).
+Artifact: structured output returned by the task, not necessarily a file.
+
+This is application-role separation. Both frameworks can live inside ONE agent
+container. Cross-framework does not require a new Docker service per role.
+
+4. THE ACTUAL AGENT DIRECTORY
+------------------------------
+Five LangGraph-labeled entries:
+  invoice-monitor-agent, extractor-agent, invoice-data-validation-agent,
+  reporting-agent, rag-orchestrator-agent.
+Two Google ADK-labeled entries:
+  translation-agent, business-validation-agent.
+
+bootstrap() imports tools, LangGraph wrappers and ADK modules. It guards repeated
+initialization with _done, so imports do not duplicate registrations.
+GET /agents or GET /a2a/agents shows the runtime directory.
+An entry's framework label is not proof that a model-driven ADK turn executed.
+Check its returned executor and relevant trace/log instead.
+
+5. TRANSLATION WALKTHROUGH
+---------------------------
+workflow.translation_node(state)
+  -> a2a_client.try_send('translation-agent','translate_invoice',{'text':raw})
+  -> A2A message/send envelope
+  -> A2ARegistry selects the registered agent and skill
+  -> TranslationAgent.execute()
+  -> run_with_adk() when possible
+  -> ADK LlmAgent/Runner with LiteLlm(BEDROCK_MODEL)
+  -> lang_bridge FunctionTool wrapper -> MCPClient.call('lang_bridge')
+  -> authoritative tool result, parsed into state.
+
+Agent instruction says to call the tool, not translate invented facts from
+memory. run_with_adk() expects usable JSON with translated_text. An unusable
+result triggers fallback rather than assuming free-form text is correct.
+
+This is your handover point to Aman: 'ADK selects/calls a capability; MCP exposes
+and invokes its implementation.'
+
+6. BUSINESS VALIDATION WALKTHROUGH
+-----------------------------------
+workflow.business_validation_node(state)
+  -> business-validation-agent / validate_against_erp
+  -> ADK tools business_validation and erp_lookup
+  -> approved ERP records via the tool's HTTP path
+  -> discrepancies merged into current state.
+
+The ordinary graph validator already runs first. This delegated route is an
+additional validation path, not the first or only one. Deduplication is by
+field_name and invoice_value; differently named equivalent findings can remain.
+Single-record lookup is a direct tool path rather than unnecessary reasoning.
+
+7. WHAT ADKAgent._build() CREATES
+----------------------------------
+LlmAgent: agent instruction, tools and LiteLlm model adapter.
+FunctionTool: exposes an MCP-calling Python wrapper to ADK.
+InMemorySessionService: per-agent conversational session store.
+Runner: drives one turn and reads final-response events.
+
+google.genai.types is used for message objects. That import does not mean Gemini
+is the selected model: intended model selection is the Bedrock LiteLlm string.
+Session memory is not the audit DB and not durable LangGraph checkpoints.
+
+8. A2A TRANSPORT IN THIS CODE
+------------------------------
+A2A_BASE_URL empty -> direct in-process custom server/registry dispatch.
+A2A_BASE_URL set -> HTTP JSON-RPC to /a2a/{agent_id}.
+Discovery: /a2a/agents and /a2a/{agent_id}/.well-known/agent-card.json.
+Invocation: JSON-RPC method message/send, skill metadata and Message data.
+Server also offers tasks/get using bounded in-memory task retention.
+
+Conceptual example envelope (illustrative, not a credential-bearing command):
+  method: message/send
+  params.skill: translate_invoice
+  params.message: data part containing the document text
+Result: Task with status completed and translation artifact data.
+
+Client get_card()/supports() can inspect skills. send() does not enforce a
+separate discovery request on every call. Do not promise a network discovery
+round trip for the default in-process route.
+
+9. FALLBACKS AND THE EVIDENCE YOU MUST SHOW
+-------------------------------------------
+ADK build is optional and checks ADK_ENABLED plus explicit model credentials.
+If unavailable, execute() calls run_deterministic(), often through the same MCP
+tool. Returned executor can be google_adk or deterministic_tool_call.
+A2A failure can also return control to a local workflow translator.
+
+The underlying LLM wrapper may itself fall back from Bedrock to local regex/
+passthrough handlers. Thus even a successful task needs execution-mode context.
+This code uses direct LiteLLM Bedrock, NOT ChatBedrockConverse initialization.
+Custom a2a/*.py is not proof of official A2A SDK conformance/authentication.
+
+10. SAFE DEMO PLAN
+-------------------
+Before class, inspect a running lab instance rather than modifying deployment.
+1. GET /agents: point out the two frameworks and seven registered cards.
+2. GET /a2a/translation-agent/.well-known/agent-card.json: identify skill and URL.
+3. Process one approved test document through the normal workflow.
+4. Show node:translation trace and delegate result/executor.
+5. Show business-validation delegation and the MCP tool handoff.
+6. If it fell back, say so and explain the fallback path; don't present it as
+   a successful live ADK/Bedrock turn.
+
+No .env or actual keys should appear on screen. Discovering a card does not
+make a billable model call; actual processing can.
+
+11. VIVA QUESTIONS
+-------------------
+Q: What did you add, since LangGraph already existed?
+A: A second framework's agent execution and a discovery/delegation boundary.
+Q: Why not directly call a translation function?
+A: Named skill delegation separates orchestration from the agent implementation.
+Q: MCP versus A2A?
+A: MCP invokes tools; A2A delegates work to agent capabilities.
+Q: Why only six containers if there are seven agents?
+A: Logical agent roles share the agent service; deployment and role counts differ.
+Q: What happens on ADK failure?
+A: The registered agent can call its MCP tool deterministically, or workflow
+   fallback can take over; executor/mode exposes the distinction.
+Q: Is the communication automatically secure?
+A: No. This custom protocol layer is not complete authentication/TLS.
+Q: Does SDK installation prove execution?
+A: No. An actual runner turn and output/executor evidence is required.
+
+12. YOUR TWO-MINUTE SPEECH
+---------------------------
+"Last month ka flow LangGraph-centric tha. Humne ab translation aur business
+validation ke liye Google ADK agents add kiye. LangGraph A2A client se named
+skill delegate karta hai. Agent card capability describe karta hai, message/send
+request bhejta hai aur Task artifact mein structured result wapas aata hai.
+ADK Runner tools ke through kaam karta hai, aur woh tools MCP layer se invoke
+hote hain. Is implementation mein default transport in-process hai; HTTP
+configurable hai. Failure par deterministic tool path available hai, isliye
+demo mein executor check karte hain. Naya contribution translation ka existence
+nahi, cross-framework delegation aur execution boundary hai."
+
+DELIVERABLE / HANDOVER
+Your demo: card -> skill -> delegated task -> executor -> tool handoff.
+Your diagram: LangGraph -> A2A -> ADK -> MCP.
+Your slide: slide 3 left; also explain your layer on slide 2 architecture.
+Your next speaker: Aman explains how that MCP tool was discovered and invoked.

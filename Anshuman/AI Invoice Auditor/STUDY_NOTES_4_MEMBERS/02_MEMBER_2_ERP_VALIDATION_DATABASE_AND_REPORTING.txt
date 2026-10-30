@@ -1,0 +1,295 @@
+MEMBER 2 - ERP VALIDATION, DATABASE, REPORTS AND RISK GATE
+=========================================================
+
+SCOPE AND TEAM SPLIT
+Reference: Anshuman/AI Invoice Auditor, the friend's newly selected project.
+This is a study allocation, not a claim of original authorship.
+Member 1 supplies parsed evidence; you evaluate and persist it; Member 3 indexes
+approved knowledge; Member 4 gives the reviewer control and integrates services.
+First read 05_ARCHITECTURE_EXPLAINED.txt. Old project's tests and database design
+must not be claimed for this code.
+
+1. YOUR PART IN ONE SENTENCE
+----------------------------
+"Mera part invoice data ko required-field rules aur ERP purchase order se
+compare karke discrepancies nikalta hai, report banata hai, database mein save
+karta hai aur risk score se human review ki need decide karta hai."
+
+2. FILES AND READING ORDER
+---------------------------
+config/rules.yaml: required fields, tolerances, currencies, policies and risk.
+database/init.sql: actual SQL tables and seeded ERP data.
+data/ERP_mockdata/*.json and database/seed_erp.py: reference data and seeding.
+services/mock_erp/main.py: FastAPI /po, /vendor, /sku lookup endpoints.
+services/mock_erp/db.py: PostgreSQL/JSON-backed ERP access.
+services/agent/graph/nodes/validator.py: normal graph validation path.
+services/agent/tools/invoice_tools.py: MCP business_validation/completeness tools.
+services/agent/adk_agents/business_validation_agent.py: delegated validation.
+services/agent/graph/nodes/reporter.py: verdict, files and persistence.
+services/agent/utils/db.py: AuditDatabase read/write methods.
+services/agent/utils/risk_scoring.py: compute_risk().
+services/agent/main.py: revalidation and review endpoints; coordinate with Member 4.
+
+3. ERP BASICS
+--------------
+ERP = Enterprise Resource Planning. Here it is a mock enterprise reference
+service. It tells us the approved purchase order, vendor and SKU values.
+PO = purchase order; SKU = stock/item identifier.
+Invoice values are what a vendor billed. ERP values are the approved reference.
+The model does not get to invent the approved price or purchase order.
+
+Internal HTTP base: http://mock-erp:8000.
+Host access: http://localhost:8001 when mapped from the same Docker host.
+Endpoints include GET /health, /po/{po_number}, /vendor/{vendor_id},
+and /sku/{item_code}. ERP has Pydantic response contracts.
+
+Normal code fetches reference data through HTTP. However validator.py has an
+exception fallback importing services.mock_erp.db.erp_db directly, and name
+resolution can also use fallback data. So 'strictly HTTP-only in every possible
+execution path' is not true for this version. The ADK MCP business_validation
+tool's normal design uses its HTTP _erp_get helper. Know both paths.
+
+4. DATABASE ARCHITECTURE
+-------------------------
+PostgreSQL 16 contains three schemas:
+
+erp:
+  vendors: vendor_id, vendor_name, country, currency.
+  sku_master: item_code, category, uom, gst_rate.
+  purchase_orders: po_number linked to vendor_id.
+  po_line_items: item code, qty, unit_price, currency and description.
+
+audit:
+  invoice_audit: UUID, source path/checksum, raw/translated text, language,
+    confidence, parsed headers, status, recommendation, risk/review fields,
+    extracted_raw JSONB, thread_id and timestamps.
+  invoice_line_items: typed numeric quantities/prices/totals linked to invoice.
+  discrepancies: field_name, invoice_value, erp_value, deviation_pct, severity.
+  human_feedback: original/corrected values, person, timestamp, revalidated flag,
+    decision and notes. Review decisions also go here.
+
+langgraph:
+  Checkpoint tables created by the framework's saver. These represent execution
+  progress rather than the business review decision.
+
+Primary key identifies one row. Foreign key links child rows to an invoice or PO.
+UNIQUE file_checksum prevents more than one current row for identical bytes.
+NUMERIC columns preserve declared database numeric precision.
+JSONB stores flexible structured extraction; TEXT preserves source evidence.
+
+5. DO NOT CONFUSE THIS WITH IMMUTABLE REPORT VERSIONING
+-------------------------------------------------------
+AuditDatabase.insert_invoice_audit() uses an upsert on file_checksum.
+On conflict it updates headers, evidence, extracted_raw, status and other fields.
+insert_line_items() deletes the old invoice lines before inserting replacements.
+insert_discrepancies() similarly replaces nonempty current discrepancy results.
+Report files use <file_stem>_report.json/html and can be overwritten.
+
+human_feedback preserves correction/decision records, and raw text is retained,
+but there is no audit_runs/report_versions table matching the older project.
+Do not say 'every historical structured extraction/report version is immutable'.
+The ordinary /feedback endpoint records feedback only. /revalidate also changes
+the current structured invoice and regenerates report output.
+
+Technical detail worth noticing: the insert_line_items/insert_discrepancies
+methods return early on an empty list. That is different from always deleting
+previous rows when a new audit has zero results. Mention as an edge case if
+asked about complete correction reconciliation, not as a feature guarantee.
+
+6. DATA VALIDATION VERSUS BUSINESS VALIDATION
+---------------------------------------------
+Data validation: can this invoice be interpreted consistently by itself?
+  - Mandatory header fields and line fields.
+  - Currency symbol normalization and accepted currency list.
+  - Presence of line items and arithmetic consistency.
+
+Business validation: does that data agree with enterprise references?
+  - Does PO exist? Is the vendor associated with that PO?
+  - Does currency agree with reference data?
+  - Is the billed item on the PO?
+  - Does quantity/unit price differ beyond tolerance?
+
+An invoice can be arithmetically correct yet bill a price above the approved PO.
+It can also match the PO price but have a wrong stated total.
+
+7. ACTUAL RULES IN THIS PROJECT
+--------------------------------
+Required headers: invoice_number, invoice_date, vendor_name, currency, total_amount.
+Required line fields: item_code, description, quantity, unit_price, line_total.
+Accepted currencies: USD, EUR, INR, GBP, VND.
+Price tolerance: 5 percent. Quantity tolerance: 0 percent.
+Tax difference configuration: 5 percent.
+Reporter auto-approve translation-confidence threshold: 0.95.
+Risk-gate low-translation-confidence threshold: 0.75.
+Risk auto-approve threshold: score <= 0.30 with no hard block.
+
+Two separate thresholds, 0.95 and 0.75, have different jobs. Do not merge them.
+Not every YAML key is enforced identically by every path. For example the graph
+data-validation total check has explicit 5% and absolute-difference >1 logic.
+The standalone MCP completeness tool contains its own arithmetic checks.
+
+8. CALCULATIONS WITH AN EXAMPLE
+--------------------------------
+deviation_percent = abs(invoice_value - erp_value) / abs(erp_value) * 100.
+The graph path guards some comparisons with ERP value > 0; zero-reference cases
+are not universally treated the same in every helper.
+
+Example: approved unit price 100, invoice 110 -> deviation 10 percent.
+It exceeds the 5% price tolerance. In the graph path a price discrepancy at
+10% can be WARNING; larger price differences become ERROR. In the MCP tool
+path severity selection differs and can escalate to CRITICAL above 4*tolerance.
+Quantity tolerance is zero, so even a small quantity difference is significant.
+Do not promise one universal severity calculation across the two code paths.
+
+Graph data arithmetic sums quantity*unit_price for all lines and adds tax.
+It compares this expected total to the parsed invoice total. Values are
+converted with Python float. This code is NOT Decimal-only financial arithmetic;
+the earlier project used Decimal but this one generally does not.
+Database NUMERIC and Python float are different implementation choices.
+
+9. TWO BUSINESS-VALIDATION ROUTES
+----------------------------------
+Route A:
+validator_node() -> run_data_validation() + run_business_validation().
+Data errors become ERROR discrepancies too.
+
+Route B, immediately afterward in the main graph:
+workflow.business_validation_node()
+  -> A2A business-validation-agent / validate_against_erp
+  -> Google ADK tool loop when available, otherwise deterministic tool call
+  -> MCP business_validation tool.
+
+The graph merges delegated discrepancies with existing ones using a key based
+on field_name and invoice_value. Route A and B can name a field differently,
+so semantically similar findings may not deduplicate. The dual validation is
+real source behavior; do not describe it as a single mandatory call.
+
+10. REPORTER: THREE DIFFERENT OUTPUT CONCEPTS
+----------------------------------------------
+reporter_node() determines:
+
+validation_status:
+  passed: no discrepancies and no data errors.
+  partial: findings exist but no CRITICAL/ERROR/data-error condition.
+  failed: critical/error findings or data errors.
+
+recommendation:
+  approve: passed and translation_confidence >= 0.95.
+  reject: failed and a currency discrepancy, or missing mandatory header.
+  manual_review: other cases.
+
+review_status is decided separately by risk_gate_node():
+  auto_approved, pending_review, later approved or rejected by a person.
+
+Important subtlety: a reporter recommendation of manual_review does not by
+itself force risk_gate pending_review. Only configured weights/hard blocks do.
+That is why recommendations and operational review statuses must both be read.
+
+report_data includes headers, amounts, source language/confidence, line items,
+data errors, discrepancies and timestamp. generate_html_report() builds HTML.
+File write errors are caught, allowing DB persistence to continue.
+The database is the principal record; HTML is a derived output.
+The report is generated BEFORE risk_gate in the normal graph. The file payload
+does not necessarily contain the final risk/review status shown later in the DB.
+
+11. RISK SCORE - EXACT WALKTHROUGH
+-----------------------------------
+compute_risk(state,rules) returns (score, review_status, reasons).
+Default weights per discrepancy:
+  CRITICAL 1.00; ERROR 0.60; WARNING 0.30; INFO 0.10.
+Additional weight per data-validation error: 0.40.
+Low translation confidence: additional 0.30.
+Scores are summed and rounded; they are not normalized probabilities.
+A score above 1 is possible. Saying 'risk score 0.6 means 60% fraud' is wrong.
+
+Configured hard blocks include reject recommendation, critical discrepancy,
+invalid currency and missing mandatory header.
+If any hard block is triggered -> pending_review regardless of score.
+Otherwise score <= 0.30 -> auto_approved; greater -> pending_review.
+
+Example: one ERROR -> 0.60 -> pending_review.
+Example: one WARNING -> 0.30 -> can auto_approve if no hard block.
+Example: one data error also represented as an ERROR discrepancy can count in
+both categories. This is how the weighted implementation works.
+
+Important implementation caveat: confidence uses float(value or 1.0) here.
+A numeric 0.0 is false in Python and becomes 1.0 in that expression. Therefore
+do not claim the current risk function reliably penalizes exact zero confidence.
+The source should be explained honestly; these notes do not modify it.
+
+12. HUMAN REVIEW HANDOVER
+---------------------------
+Member 4's /revalidate reconstructs state, applies approved header fields or
+replacement lines, reruns validator and reporter, computes risk, and explicitly
+keeps review_status=pending_review for a final human decision.
+It records correction entries with revalidated=True.
+This revalidation path does not invoke the additional ADK business-validation
+node in the same order as a fresh full pipeline.
+
+Approve & Index calls indexing and records approved; Reject records rejected.
+Do not equate 'approved by a reviewer' with a bank payment instruction.
+
+13. EXAMPLE DATA YOU CAN POINT TO
+----------------------------------
+The actual seed includes VEND-001 Global Logistics Ltd (USD), VEND-003 Transporte
+Iberico (EUR), VEND-004 HafenLogistik (EUR), and other vendors.
+PO-1001 has SKU-001 qty 50 price 12, SKU-002 qty 120 price 3,
+SKU-003 qty 30 price 15, all USD.
+Use these new identifiers, not the earlier project's BOX-01/PAL-01 EUR sample.
+Inspect actual invoice data before predicting its outcome.
+
+14. DEMO AND CHECKS YOU OWN
+----------------------------
+1. Open ERP /docs or /po/PO-1001 and identify approved fields.
+2. Show an invoice detail with invoice versus ERP values and deviation.
+3. Explain validation_status, recommendation and review_status separately.
+4. Calculate a percentage by hand and compare the displayed finding.
+5. Show risk reasons and pending review versus auto approval.
+6. With Member 4, edit a test invoice, revalidate, inspect correction history,
+   then explicitly approve/reject. Do not modify real evidence for practice.
+
+Suggested reasoning tests (not a claim they have been executed here):
+- Missing required header -> error, reject/pending review as applicable.
+- Price exactly at 5% versus above 5% -> compare tolerance boundary.
+- Quantity 10 vs 11 at zero tolerance -> discrepancy.
+- Missing PO, unrecognized SKU, currency mismatch -> blocking evidence.
+- Redis down should not erase audit data; PostgreSQL unavailable under strict
+  startup should prevent claiming a fully healthy audit service.
+
+15. VIVA QUESTIONS
+-------------------
+Q: Why separate ERP from audit tables?
+A: ERP describes approved reference records; audit describes document evidence
+   and review outcomes. They have different ownership and update meanings.
+Q: What is upsert?
+A: Insert a new record or update selected fields when its unique key conflicts.
+Q: What is a discrepancy row?
+A: One recorded difference with field, billed value, reference value and severity.
+Q: Is risk a machine-learned fraud probability?
+A: No, it is a configurable weighted rule score with hard blocks.
+Q: Why not let the LLM approve every invoice?
+A: Deterministic reference comparison and human accountability are required.
+Q: Does recording feedback apply the correction?
+A: Not by itself. The revalidation endpoint applies current structured changes.
+Q: Are all report versions retained here?
+A: No. Current data/report files can be updated; feedback decisions are retained.
+
+16. TWO-MINUTE SPEECH
+----------------------
+"Main validation aur data layer explain karunga. Parsed invoice ko pehle
+mandatory fields, currency aur arithmetic rules se check karte hain. Uske baad
+mock ERP ke purchase order, vendor aur SKU values se comparison hota hai.
+Price tolerance 5 percent aur quantity tolerance zero hai. Findings mein actual
+aur expected values, deviation aur severity store hoti hai. Reporter passed,
+partial ya failed result aur recommendation banata hai. Risk score separately
+weighted discrepancies aur hard blocks ke basis par auto approval ya human
+review route karta hai. PostgreSQL evidence, current structured data aur
+reviewer feedback rakhta hai. Is version mein revalidation current records ko
+upsert karta hai; immutable report-version history ka claim nahi karenge."
+
+STUDY CHECKLIST
+[ ] Draw five ERP/audit relationships.
+[ ] Calculate deviation and a sample weighted risk score.
+[ ] Explain both validation routes and their differences.
+[ ] Distinguish confidence threshold, risk threshold and financial tolerance.
+[ ] Explain current-record updates versus feedback history honestly.

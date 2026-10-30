@@ -1,0 +1,36 @@
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# VCS / IDE
+.git/
+.vscode/
+.idea/
+
+# Local artifacts (must not enter the image)
+data/incoming/
+data/samples/
+outputs/
+logs/
+*.sqlite
+*.log
+
+# Docs / spec
+README.md
+Readme.md
+problem.md
+*.pdf

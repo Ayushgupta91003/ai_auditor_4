@@ -1,0 +1,193 @@
+PART 2 - AMAN PATIDAR (1458242)
+NEW ADDITION: DISCOVERABLE MCP TOOL LAYER
+=========================================
+
+1. WHAT CHANGED FROM THE OLD SPEC?
+-----------------------------------
+Extraction, translation, validation and five-role RAG already existed as old
+requirements. The new contribution is exposing these operations through a
+named, discoverable tool contract instead of treating every capability as an
+unstructured direct function import. Newer spec pages 2-3 explicitly require
+Model Context Protocol discovery/access/invocation and named tool roles.
+
+Your one-liner: 'Capability purani ho sakti hai, lekin registry, discovery,
+schema metadata aur uniform invocation boundary naya layer hai.'
+
+2. PRIMARY CODE
+----------------
+services/agent/tools/registry.py
+  Tool, Tool.to_mcp(), ToolRegistry, tool() decorator, register(), call().
+services/agent/tools/invoice_tools.py
+  Invoice-side handlers and declared schemas/ownership hints.
+services/agent/tools/rag_tools.py
+  RAG-side handlers and query-refinement helper.
+services/agent/mcp_server/server.py
+  dispatch(), initialize, tools/list, tools/call, HTTP routes and stdio helper.
+services/agent/mcp_server/client.py
+  MCPClient.list_tools(), describe(), has_tool(), call(), try_call().
+services/agent/adk_agents/base.py
+  mcp_tool_function(): bridges your tools into ADK FunctionTool.
+services/agent/rag/agents.py
+  Important consumers of your named tools.
+services/agent/bootstrap.py
+  Imports modules to populate registries once.
+
+3. THREE WORDS: AGENT, TOOL, CONTRACT
+--------------------------------------
+Agent: decides or coordinates which capability is needed.
+Tool: implements an operation such as retrieving matching chunks.
+Contract: tool name, description, input schema and output/error conventions.
+
+Without a contract, callers import a function and rely on its signature.
+With discovery, a client lists available capabilities and calls a name with
+arguments. This is useful across framework/process boundaries and exposes the
+surface to system inspection. It does not make every tool intelligent or an LLM.
+
+4. HOW REGISTRATION WORKS
+--------------------------
+@registry.tool(name=..., description=..., input_schema=..., agent=...)
+wraps a handler definition. Importing the module executes the decorator and
+stores a Tool object in ToolRegistry._tools.
+Duplicate names are rejected. list() gives stable sorted entries.
+to_mcp() emits name, description, inputSchema and annotations such as
+owningAgent, readOnlyHint and guardrail names.
+
+Dataclass means a convenient structured Python container. JSON inputSchema
+documents the intended request shape. Here registry.call() directly invokes
+handler(**arguments), catches exceptions and produces ok/result or ok/error.
+It does not run a complete JSON Schema validator for every advertised schema.
+Annotations are hints, not automatic security enforcement.
+
+5. TOOL INVENTORY - ACTUAL COUNT IS THIRTEEN
+--------------------------------------------
+INVOICE TOOLS:
+invoice_watcher: list/detect incoming candidates.
+data_harvester: extraction/OCR result plus document safety scan.
+lang_bridge: translation result with caching and input scan.
+data_completeness_checker: field/arithmetic checks.
+business_validation: compare invoice with ERP references.
+erp_lookup: one reference record lookup.
+insight_reporter: report/persistence wrapper.
+
+RAG TOOLS:
+vector_indexer: chunk/embed/store documents.
+semantic_retriever: query embedding and candidate retrieval.
+chunk_ranker: weighted vector/lexical/identifier reranking.
+response_synthesizer: context answer plus answer guardrails/cache.
+rag_evaluator: triad metrics/pass threshold.
+query_refiner: improve retrieval search wording after critique.
+
+The newer brief names eleven primary tools; current code also includes helper
+erp_lookup and query_refiner. Hence thirteen decorators, although some comments
+still say eleven. Runtime GET /mcp/tools is the count to demonstrate.
+The business logic itself is often baseline; the discoverable packaging is new.
+
+6. CLIENT-TO-SERVER CALL CHAIN
+-------------------------------
+mcp_client.call('lang_bridge', text=...)
+  -> has_tool(): obtains cached tools/list when necessary
+  -> refreshes discovery once if name not found
+  -> _rpc('tools/call', {'name':..., 'arguments':...})
+  -> server dispatch(method,params,id)
+  -> registry.call(name,arguments)
+  -> handler executes
+  -> result includes isError/content/structuredContent
+  -> client returns structuredContent or parses textual JSON.
+
+JSON-RPC envelope:
+  jsonrpc='2.0', id=..., method='tools/call',
+  params={'name':'semantic_retriever','arguments':{'query':...}}.
+
+What id means: request-response correlation, not invoice ID.
+Input arguments should not include credentials; model/DB identity is runtime
+configuration, not a text parameter supplied by an auditor.
+
+7. TRANSPORTS AND WHAT DEFAULT ACTUALLY DOES
+--------------------------------------------
+MCP_SERVER_URL empty: MCPClient calls local server.dispatch().
+MCP_SERVER_URL set: client posts HTTP JSON-RPC to configured base + /mcp.
+The server has /mcp, /mcp/ and GET /mcp/tools, plus a stdio loop helper.
+No additional MCP container is required by the six-service topology.
+
+This is a custom MCP-shaped implementation, including its own protocol-version
+string and JSON-RPC dispatcher. Do not call it a fully tested official SDK
+server or assert all external MCP clients are compatible without integration
+tests. Advertised version is data, not a conformance certificate.
+
+8. WHO USES YOUR TOOLS?
+------------------------
+ADK translation/business agents call FunctionTool wrappers -> MCPClient.
+The active five-role RAG functions call named vector/retrieval/ranking/generation/
+evaluation tools. These are strong examples for your demo.
+Some regular invoice graph nodes are still direct Python calls. Therefore
+'all processing goes through MCP' is too broad; explain the actual paths.
+
+Example of a complete added boundary:
+Anshuman's translation delegation -> ADK tool wrapper -> your lang_bridge tool
+  -> cached/model translation implementation -> structured result.
+Ayush's guardrails run inside selected tool handlers, not merely because your
+registry attaches a guardrails annotation.
+Param's tracing wraps protocol dispatch, registry call and handler execution.
+
+9. ERROR BEHAVIOR
+------------------
+Unknown tool: client discovery failure/MCPToolError.
+Missing/incorrect arguments: handler TypeError shaped into an error result.
+Handler exception: registry catches and reports an error string.
+Server tool failure: isError=true with content describing failure.
+call(): raises MCPToolError to its caller for failure.
+try_call(): logs and returns a supplied default for best-effort operations.
+
+Graceful error wrapping does not guarantee the business operation was rolled
+back atomically. Tool call uniformity and database transaction semantics are
+different concerns.
+
+10. DEMO PLAN
+--------------
+1. GET /mcp/tools and point out name, description, inputSchema, owner/hints.
+2. Show one invoice capability and one RAG capability from the same registry.
+3. Follow the call in code: client.call -> dispatch -> registry.call -> handler.
+4. Show a read-only tools/list JSON-RPC request in /docs or a prepared request.
+5. On disposable input, call a tool with a missing required argument and explain
+   the structured error. Do not invoke write/index tools on production invoices.
+6. Show the registry call as a nested trace alongside Param.
+
+A tools/list request should be metadata only. Actual extraction/index/generation
+calls can read files, write state or incur model usage. Do not demonstrate a
+tool's safety by ignoring what the underlying handler does.
+
+11. VIVA QUESTIONS
+-------------------
+Q: What is genuinely new if the RAG functions already existed?
+A: Named tool contracts, discovery and framework-neutral invocation/error shaping.
+Q: Why thirteen tools when the brief says eleven?
+A: Eleven primary roles plus erp_lookup and query_refiner helper capabilities.
+Q: Does inputSchema mean runtime validation is complete?
+A: No. This registry advertises schemas but relies on signatures/handler checks.
+Q: Does adding a guardrail name enforce it?
+A: No. Actual scan calls must be present in relevant handlers.
+Q: Are tool calls always HTTP?
+A: No. Default transport is in-process; HTTP is configurable.
+Q: Can the tool result be anything?
+A: Handlers can return data, but server/client shape it into uniform structured
+   or textual protocol content and errors.
+Q: Is MCP the same as A2A?
+A: No. Tools are capabilities; A2A delegates an agent skill/task.
+
+12. TWO-MINUTE SPEECH
+----------------------
+"Mera addition MCP tool layer hai. OCR, translation aur RAG operations baseline
+mein the, lekin ab unke named contracts ek registry mein expose hote hain.
+Decorator name, description, input schema aur ownership register karta hai.
+Client tools/list se capabilities discover karta hai aur tools/call se invoke
+karta hai. Handler ka result structuredContent ke through wapas aata hai; errors
+uniform shape mein handle hote hain. Current code mein thirteen tools hain,
+including two helper tools. ADK aur RAG roles isi boundary ko use karte hain.
+Default transport in-process hai aur HTTP option available hai. Metadata/schema
+advertisement ko full runtime validation ya security guarantee nahi bolte."
+
+DELIVERABLE / HANDOVER
+Your demo: registry metadata -> discovery -> tool invocation -> result/error.
+Your diagram: agent -> MCPClient -> registry -> handler.
+Your slide: slide 3 right, plus tool boundary on slide 2.
+Next speaker Ayush explains actual safety checks inside those boundaries.

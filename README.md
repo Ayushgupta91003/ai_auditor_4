@@ -1,5 +1,26 @@
 # AI Invoice Auditor
 
+**Current final project:** [Anshuman/AI Invoice Auditor](Anshuman/AI%20Invoice%20Auditor/).
+
+- [Simple problem and solution overview](Anshuman/AI%20Invoice%20Auditor/NEW_ADDONS_SPLIT/PROJECT_SIMPLE_OVERVIEW.txt)
+- [Presentation, viva PDF and additions-only member guides](Anshuman/AI%20Invoice%20Auditor/NEW_ADDONS_SPLIT/)
+- [Ayush quick revision and function guides](Anshuman/AI%20Invoice%20Auditor/NEW_ADDONS_SPLIT/AYUSH_FILE_GUIDE/)
+- [Full four-member study notes](Anshuman/AI%20Invoice%20Auditor/STUDY_NOTES_4_MEMBERS/)
+
+Run the current final project from its own directory:
+
+```bash
+cd "Anshuman/AI Invoice Auditor"
+# Copy .env.example to .env and configure it privately for your lab.
+docker compose up --build -d
+```
+
+Private credentials, incoming invoice documents and generated audit reports are deliberately excluded. Supply your authorized test invoices in the final project's data/incoming folder. The mock ERP seed JSON/SQL and all application/preparation source are included. Follow the final project's configuration names; the older implementation's credentials/setup scripts and test results do not automatically apply to it.
+
+## Earlier implementation (retained)
+
+The material below describes the earlier implementation kept at the repository root.
+
 **Company laptop / Nuvepro:** follow [START_HERE_NUVEPRO.md](START_HERE_NUVEPRO.md). It covers role-based AWS authentication without embedded keys, Docker credential forwarding, setup, demo checks and troubleshooting. Full project explanation: [PROJECT_DOCUMENTATION](docs/PROJECT_DOCUMENTATION.md). Four member walkthroughs: [TEAM_MEMBER_GUIDE](docs/TEAM_MEMBER_GUIDE.md). Exact implemented/tested/pending boundaries: [REQUIREMENTS_MATRIX](docs/REQUIREMENTS_MATRIX.md).
 
 **Current laptop/Groq setup:** see [LOCAL_QUICKSTART](docs/LOCAL_QUICKSTART.md). Run `START_LOCAL.cmd`, open `http://127.0.0.1:8765`, then enter your key in **Groq setup**. This temporary profile needs neither AWS nor Docker. The six-service Bedrock profile below is preserved for the final lab.

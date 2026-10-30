@@ -1,0 +1,54 @@
+AYUSH - MERI FILES KAHA HAIN?
+============================
+
+UTILS KA EXACT PATH
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\utils
+
+Explorer mein: Anshuman > AI Invoice Auditor > services > agent > utils.
+Utils project root par nahi hai. services ke andar agent open karna hai.
+File Explorer address bar mein upar wala full path paste kar sakte ho.
+
+Folder structure:
+AI Invoice Auditor/
+  services/
+    agent/
+      utils/
+        guardrails.py       <-- Tera primary RAI code
+        risk_scoring.py     <-- Tera primary risk calculation
+      graph/
+        workflow.py         <-- Risk gate graph mein yahan connect hai
+      config_loader.py      <-- YAML settings load karta hai
+  config/
+    rules.yaml              <-- Tere rules/settings, utils ke andar nahi
+
+READING ORDER - BAS YE FOUR FILES PEHLE
+1. guardrails.py -> 01_GUARDRAILS_FUNCTIONS.txt
+2. risk_scoring.py -> 02_RISK_SCORING_FUNCTION.txt
+3. config/rules.yaml -> 03_RULES_YAML_SETTINGS.txt
+4. graph/workflow.py -> 04_WORKFLOW_RISK_GATE.txt
+
+Connection samajhne ke liye optional:
+05_WHERE_MY_CODE_IS_CALLED.txt
+Ismein call sites aur config_loader ke short notes hain. Baaki poori files
+ratne ki zaroorat nahi; sirf apne relevant functions dekho.
+
+CORE SOURCE FILE PATHS
+RAI:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\utils\guardrails.py
+
+Risk calculation:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\utils\risk_scoring.py
+
+Configuration:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\config\rules.yaml
+
+Graph integration:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\graph\workflow.py
+
+REMEMBER
+RAI: content ko safely kaise handle karna hai?
+Risk gate: audit ko index karna hai ya review ke liye rokna hai?
+Utils mein db/cache/llm/vector/observability files bhi hain, lekin woh sab
+tera primary assigned part nahi hain. Unke roles ka basic context enough hai.
+
+Yeh guides actual Anshuman code par based hain. Application code change nahi hua.

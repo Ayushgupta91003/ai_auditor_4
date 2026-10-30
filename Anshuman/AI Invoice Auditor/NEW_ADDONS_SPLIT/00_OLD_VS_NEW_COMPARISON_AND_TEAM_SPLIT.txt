@@ -1,0 +1,167 @@
+OLD SPEC VS CURRENT ANSHUMAN PROJECT - ADDITIONS ONLY
+=====================================================
+
+READ THIS FIRST
+The previous STUDY_NOTES_4_MEMBERS folder remains a full-project explanation.
+This NEW_ADDONS_SPLIT folder is different: it isolates what the group should
+explain as additions over the last-month specification.
+Names below follow the supplied old presentation. This is a proposed speaking
+allocation, not a claim that a particular person originally authored the code.
+
+SOURCES COMPARED
+A. Last-month PDF: AI_Invoice_Auditor_Capstone_Spec (1).pdf, 14 PDF pages.
+   References below use PDF page numbers, not guessed section numbering.
+B. Current code: Anshuman/AI Invoice Auditor.
+C. Previously supplied newer Capstone_AI_Invoice_Auditor.pdf, 15 pages, used
+   to confirm which agentic additions became explicit requirements.
+D. Pasted old Beamer presentation: design/team-name reference only.
+
+There is no old source-code checkout in this comparison. Therefore statements
+about 'old' mean required/described in the old specification, not proof of
+exactly what the team implemented last month.
+
+1. WHAT IS NOT NEW
+-------------------
+The following were already in last-month PDF and must not be advertised as new:
+
+Feature                         Old PDF evidence
+Folder monitor/checksum         page 2, sections 3.1-3.2.
+PDF/DOCX/scan OCR                page 2, section 3.2.
+Bedrock translation/cache        page 2, section 3.3.
+Rules and ERP HTTP matching     pages 2-3, section 3.4.
+JSON/HTML reports                page 3, section 3.5.
+Five RAG roles + triad >0.7      page 3, section 3.6.
+Streamlit review/corrections     page 3, section 3.7.
+Permanent feedback              pages 3 and 7, correction INSERT requirement.
+Six Docker services/network     page 4, section 5; pages 10-12 deployment.
+PostgreSQL/Qdrant/Redis          pages 5-9, data architecture.
+Stored raw text/checkpoints     pages 5-8.
+Persistence/rebuild verification pages 12-13.
+LiteLLM gateway/YAML prompts     page 9.
+
+The business tasks are the baseline. The major additions change HOW capabilities
+are discovered, delegated, protected and observed, not whether OCR/RAG exists.
+
+2. FOUR MAIN ADDED AREAS
+-------------------------
+PART 1 - ANSHUMAN SHUKLA (1458243)
+Cross-framework agents: Google ADK + A2A delegation.
+Old: LangGraph/LangChain already specified; no Google ADK/A2A requirement.
+Newer spec: page 2 requirements 12-13; page 3 framework/protocol description.
+Current: adk_agents/, a2a/, bootstrap.py and graph/workflow.py.
+Explain agent cards, skills, message/send, Task results, ADK Runner and fallback.
+Detailed file: 01_ANSHUMAN_ADK_AND_A2A.txt.
+
+PART 2 - AMAN PATIDAR (1458242)
+Discoverable tools: Model Context Protocol layer.
+Old: business/RAG operations specified, but no dynamic MCP discovery contract.
+Newer spec: page 2 named tools; page 2 architecture/page 3 MCP requirement.
+Current: tools/registry.py, invoice_tools.py, rag_tools.py, mcp_server/.
+Explain registry/schema metadata, tools/list, tools/call and structured errors.
+Detailed file: 02_AMAN_MCP_TOOL_LAYER.txt.
+
+PART 3 - AYUSH GUPTA (1458241)
+Responsible AI guardrails plus the additional risk-based indexing policy.
+Old: security/no-secrets already required, but no explicit application-wide RAI
+control layer or weighted human-review/index gate.
+Newer spec: page 2 requirement 14, plus architecture's RAI requirement.
+Current: utils/guardrails.py, rules.yaml responsible_ai, risk_scoring.py and
+workflow.risk_gate_node(). Guardrails are the main new requirement; weighted
+risk routing is an additional implementation enhancement.
+Detailed file: 03_AYUSH_RAI_AND_RISK_GATE.txt.
+
+PART 4 - PARAM SRIVASTAVA (1458240)
+Langfuse observability plus concrete review/revalidation integration evidence.
+Old: ordinary audit/logging/security already present; no Langfuse requirement.
+Newer spec: page 2 requirement 15 and page 3 observability description.
+Current: utils/observability.py and trace/span/score call sites; main.py test
+endpoint, Streamlit system visibility and human-decision controls.
+Detailed file: 04_PARAM_LANGFUSE_AND_REVIEW_EXTENSION.txt.
+
+This gives each person a new requirement, a substantive code boundary, a demo
+and viva content. Members 3/4 share the risk-review handoff, rather than dividing
+unrelated baseline extraction/SQL work again.
+
+3. OPTIONAL THEN IMPLEMENTED IS NOT THE SAME AS NEVER MENTIONED
+---------------------------------------------------------------
+Old PDF page 3 explicitly says recommendation 'Need not be implemented!!' and
+revalidation 'Need not be implemented!'. Yet its overview/functional text still
+mentions recommendations, corrections and revalidation. Classify correctly:
+
+- Full edit -> revalidate -> explicit approve/reject -> indexing loop:
+  implemented beyond the waived/optional minimum, not an entirely new concept.
+- risk_gate weighted score + conditional indexing: a concrete added policy.
+- Watcher pause/resume/stats and system directories: operational enhancements
+  to old monitoring, not newly invented invoice monitoring.
+
+The older PPT called human-in-the-loop entirely 'Beyond Scope'. The revised
+slides qualify this instead of copying that stronger claim.
+
+4. CURRENT-CODE FACTS THAT CORRECT THE OLD SLIDE NARRATIVE
+----------------------------------------------------------
+A. Current workflow has eight named nodes:
+   extractor -> translator -> parser -> validator -> business_validation
+   -> reporter -> risk_gate -> conditional indexing.
+   It is not simply a six-stage flow because six containers exist.
+
+B. Revalidation order is validator -> reporter -> compute_risk, then an explicit
+   pending_review update. It is not validator -> risk_gate -> reporter.
+
+C. Current persistence upserts invoice data and replaces line rows. Feedback
+   is recorded separately, but original structured extraction/report versions
+   are not immutable end to end. Do not repeat that claim from the old PPT.
+
+D. Registry source declares 13 tool decorators and 7 agent cards. README's
+   'eleven tools' wording is stale. Verify runtime /mcp/tools and /agents.
+
+E. MCP/A2A are custom implementations. Default empty transport URLs use
+   in-process dispatch, not a network request per tool/delegation.
+   Do not claim official SDK conformance or secure authentication from names alone.
+
+F. ADK executes with a Bedrock LiteLlm model when configured and usable; otherwise
+   it falls back to deterministic tool calls. Executor/mode is demo evidence.
+   The LLM wrapper is direct LiteLLM Bedrock, not ChatBedrockConverse.
+
+G. Old RAG already had the triad/retry requirement. New named tool boundaries,
+   safety and tracing augment that RAG. Current default max_retries=3 is three
+   total attempts in its implementation, not four.
+
+H. Langfuse facade can include input/output payloads. Truncation is not universal
+   redaction. A synthetic generation test is not full per-call cost/token coverage.
+
+I. ERP HTTP is the normal boundary, but graph validator has a direct ERP helper
+   fallback. A current fallback is not a new approved enterprise integration.
+
+J. Old required SQL routing for structured questions and original-value
+   preservation should not be silently declared satisfied: current RAG path is
+   not a fixed SQL router, and correction upserts alter current structured data.
+
+These caveats are explanation accuracy, not requests to modify the selected code.
+No application changes were made for this study split.
+
+5. GROUP PRESENTATION PLAN - EXACTLY FIVE SLIDES
+-------------------------------------------------
+Slide 1: Old baseline versus four added capability areas, with team mapping.
+Slide 2: Architecture of the new layers over the existing six-service stack.
+Slide 3: Anshuman's ADK/A2A and Aman's MCP call chains.
+Slide 4: Ayush's RAI/risk gate and Param's Langfuse traces.
+Slide 5: Optional-to-working review extension, demo evidence and qualified claims.
+
+The provided .tex follows the reference's Madrid/navy-blue Beamer style but
+uses all five pages for explanation. No empty thank-you page replaces a topic.
+It is standalone: no external images or bibliography downloads are required.
+Compile with pdfLaTeX on Overleaf. It is source-only delivery as requested.
+Presenter notes are inside \note{} and LaTeX comments; they are hidden by default.
+Local compile was attempted but the installed MiKTeX lacks beamer.cls; the
+built-in fallback also timed out fetching its initial packages. No successful
+local compile or visual PDF review is claimed. Source checks confirmed exactly
+five frames, balanced environments and no external image/input dependencies.
+
+6. HOW TO STUDY
+----------------
+First everyone reads this comparison, then their newly assigned part.
+Use previous STUDY_NOTES_4_MEMBERS only for baseline context when needed.
+Prepare: one code walkthrough, one positive demo, one failure/fallback demo,
+one accurate limitation and a two-minute spoken explanation.
+Do not open .env during a screen-shared demonstration.
+This comparison proves source/document differences, not fresh Nuvepro success.

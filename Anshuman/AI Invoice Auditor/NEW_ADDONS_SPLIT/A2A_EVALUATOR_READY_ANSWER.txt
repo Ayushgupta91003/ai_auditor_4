@@ -1,0 +1,183 @@
+A2A - EVALUATOR-READY ANSWER
+============================
+Current code: Anshuman/AI Invoice Auditor.
+Prepared from a fresh source inspection and a synthetic in-process check.
+This note does not modify the application or claim a live Nuvepro model test.
+
+1. EXACT SHORT ANSWER TO SPEAK (ABOUT 45-60 SECONDS)
+----------------------------------------------------
+Yes. We implemented a custom A2A-style delegation layer in our project.
+LangGraph coordinates the overall workflow, while translation and business
+validation are exposed as Google ADK agent capabilities. The workflow delegates
+named skills through an A2A client and consumes structured task results.
+
+We used this boundary to separate orchestration from agent implementation and
+allow two frameworks to cooperate through a common message-and-task contract.
+For example, the translation node requests the translation-agent skill
+translate_invoice, and the returned translation is merged into workflow state.
+Business validation uses the same pattern for validate_against_erp.
+
+Our default deployment dispatches these requests in-process. HTTP transport is
+available when A2A_BASE_URL is configured. We should qualify the implementation:
+it is our custom A2A-shaped client/server/registry, not a claim of official SDK
+conformance. If ADK cannot run, a deterministic tool executor may handle the
+request, so we inspect the actual executor rather than claiming every task
+used a live ADK model.
+
+2. HINGLISH EXPLANATION
+------------------------
+Haan, code mein actual A2A delegation calls hain, sirf folder ya agent names
+nahi. LangGraph coordinator hai. Translation aur business validation ADK roles
+ko named skill ke through delegate hoti hain. Request Message mein jaati hai,
+registry appropriate skill handler choose karti hai, aur Task artifact mein
+result aata hai. Caller ko internal ADK implementation directly call nahi karni.
+
+Default mein sab same agent process mein dispatch hota hai. Isliye yeh bolna
+wrong hoga ki har call alag container ya remote server ko HTTP se jaati hai.
+Custom implementation ko official fully compliant A2A SDK bhi nahi bolenge.
+
+3. WHERE IT IS USED - ACTUAL CALL SITES
+---------------------------------------
+services/agent/graph/workflow.py:
+  translation_node()
+    a2a_client.try_send(TRANSLATION_AGENT, 'translate_invoice', ...)
+  business_validation_node()
+    a2a_client.try_send(BUSINESS_VALIDATION_AGENT, 'validate_against_erp', ...)
+
+TRANSLATION_AGENT = 'translation-agent'
+BUSINESS_VALIDATION_AGENT = 'business-validation-agent'
+
+services/agent/a2a/client.py:
+  send() builds Message + JSON-RPC method message/send.
+  With a base URL: HTTP POST /a2a/{agent_id}.
+  Without one: calls custom server.agent_rpc() in-process.
+  It parses Task, checks completed status and returns artifact data.
+
+services/agent/a2a/server.py and registry.py:
+  dispatch to registered agent/skill, shape completed/failed tasks.
+  Discovery routes advertise agent cards and capability directory.
+
+services/agent/adk_agents/translation_agent.py:
+  registers translate_invoice handler for translation-agent.
+services/agent/adk_agents/business_validation_agent.py:
+  registers validate_against_erp and lookup_erp_record handlers.
+services/agent/adk_agents/base.py:
+  attempts ADK Runner; exposes actual executor or deterministic fallback.
+services/agent/bootstrap.py and main.py:
+  register agents at startup and expose A2A HTTP routes.
+
+4. EXPLAIN ONE REQUEST END TO END
+----------------------------------
+LangGraph translation node
+  -> A2AClient.try_send(translation-agent, translate_invoice, text)
+  -> Message data + skill + context_id in message/send envelope
+  -> custom A2A server / registry
+  -> TranslationAgent.execute()
+  -> ADK Runner if usable; otherwise deterministic tool path
+  -> MCP lang_bridge capability
+  -> translation result
+  -> completed Task artifact
+  -> A2A client extracts result
+  -> source_language / translated_text / confidence copied into graph state.
+
+This separates two boundaries: A2A delegates an agent skill; MCP invokes the
+underlying tool. Their purposes are complementary.
+
+5. WHY A2A, RATHER THAN ONLY DIRECT FUNCTION CALLS?
+---------------------------------------------------
+First: cross-framework separation. The coordinator depends on a named skill
+and result contract rather than an ADK runner's internal implementation.
+Second: inspectable capabilities. Agent cards and skills describe what roles
+can perform; messages and task statuses expose success/failure coherently.
+Third: transport separation. The code supports a local dispatch path and an
+HTTP path without rewriting each workflow node's business request.
+Fourth: the newer capstone explicitly requires LangGraph and Google ADK agents
+with agent-to-agent interoperability, so this boundary addresses that scope.
+
+Do not oversell: ordinary Python calls would be simpler for a permanently
+single-process pipeline. A2A is not mathematically necessary to translate a
+file. We chose the capability boundary for interoperability and the project
+requirement; it introduces extra envelope/error-handling complexity.
+Moving to truly independent deployed agents would still need proper endpoint
+configuration, authentication, compatibility testing and operations work.
+
+6. FOLLOW-UP QUESTIONS WITH STRAIGHT ANSWERS
+--------------------------------------------
+Q: Are you using the official A2A SDK?
+A: No. This selected code has a custom spec-shaped models/client/server/registry
+   layer. We should demonstrate its supported behavior, not assert full official
+   conformance or universal compatibility.
+
+Q: Is the default request remote HTTP?
+A: No. Compose defaults A2A_BASE_URL to empty, which selects in-process dispatch.
+   A nonempty runtime setting selects HTTP. The actual lab override must be checked.
+
+Q: Then is it just a function call?
+A: Under the local transport it ultimately invokes Python handlers, but callers
+   use a Message/skill/Task contract through client and dispatcher rather than
+   directly calling the ADK implementation. It is an A2A-style abstraction, not
+   evidence of an on-wire interoperability test by itself.
+
+Q: Do you discover a card before every task?
+A: No. discover(), get_card() and supports() are available, but send() does not
+   force a separate discovery request before every invocation.
+
+Q: What is an AgentCard?
+A: Metadata describing a role's name, framework, URL, capabilities and skills.
+   A card is not evidence that its advertised ADK model executed successfully.
+
+Q: What is the difference between skill, message and task?
+A: Skill names the capability. Message carries the request data/text/context.
+   Task carries execution status and result artifacts.
+
+Q: What happens if A2A dispatch fails?
+A: try_send logs and returns a default so the workflow can take its local path.
+   Translation has an in-graph fallback; business validation may keep prior results.
+
+Q: What if A2A succeeds but ADK is unavailable?
+A: The registered agent can still complete through a deterministic MCP-tool
+   executor. That is successful delegation but not successful live ADK reasoning.
+
+Q: Are MCP and A2A alternatives?
+A: Not here. A2A delegates an agent task; the delegated agent uses MCP tools.
+
+Q: Did A2A add a new container?
+A: No. Logical roles currently share the agent service. Service count remains six.
+
+Q: Does an A2A protocol label make interactions secure?
+A: No. This layer alone is not complete authentication, authorization or TLS.
+
+Q: Could the workflow work without A2A?
+A: Yes, with direct calls/fallbacks. The chosen boundary addresses interoperability
+   and the newer requirement, not an unavoidable need for every local operation.
+
+7. WHAT TO SHOW IN THE VIVA
+----------------------------
+Open workflow.py first and point to the TWO actual try_send call sites.
+Then open client.py: show message/send, transport selection and Task parsing.
+Then show the registration in the two adk_agents files and ADKAgent.execute().
+For a running lab, inspect:
+  GET /agents
+  GET /a2a/translation-agent/.well-known/agent-card.json
+  GET /a2a/business-validation-agent/.well-known/agent-card.json
+Then show an actual node:translation or node:business_validation trace with
+its delegated flag, executor and result. Directory metadata alone is not enough.
+
+A full live proof needs a task that actually ran in the intended lab mode.
+Do not display .env or real credentials. Do not change transport settings just
+before the viva without testing the new route.
+
+8. WHAT WAS VERIFIED WHILE PREPARING THIS ANSWER
+------------------------------------------------
+Fresh source inspection confirmed the two workflow delegation calls, registry
+handlers, client/server dispatch and Compose default transport.
+A synthetic in-memory test used the actual custom A2A classes to verify card/
+skill lookup, message/send, completed Task artifact parsing and unknown-skill
+failure handling. It used a synthetic echo handler, not a real invoice/ADK model.
+No AWS call, Nuvepro access, network request or application source change occurred.
+
+FINAL SENTENCE TO REMEMBER
+---------------------------
+We implemented custom A2A-style cross-framework delegation; default transport
+is in-process, HTTP is configurable, and actual model execution must be shown
+separately from protocol dispatch.

@@ -1,0 +1,38 @@
+RISK_SCORING.PY - EK MAIN FUNCTION
+==================================
+Source path:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\utils\risk_scoring.py
+
+compute_risk(state, rules)
+Input: current findings/data errors/confidence/recommendation + YAML rules.
+Output: (score, review_status, reasons).
+
+HIGH-LEVEL STEPS
+1. risk_scoring settings load karta hai.
+2. Har discrepancy ki severity ka configured weight add karta hai.
+3. Data errors aur low-confidence condition ke extra weights check karta hai.
+4. Hard blocks check karta hai.
+5. Score threshold se compare karke review status return karta hai.
+
+DEFAULT WEIGHTS
+CRITICAL=1.00, ERROR=0.60, WARNING=0.30, INFO=0.10.
+Per data error extra=0.40; low confidence extra=0.30.
+No hard block + score <=0.30 -> auto_approved.
+Hard block OR score >0.30 -> pending_review.
+
+EXAMPLE
+One ERROR -> score 0.60 -> normally pending_review.
+One WARNING -> score 0.30 -> hard block nahi toh auto_approved ho sakta hai.
+Risk 0.60 ka matlab 60% fraud probability nahi; yeh weighted sum hai.
+
+IMPORTANT DIFFERENCE
+compute_risk() score/status calculate karta hai. Khud Qdrant mein index ya DB
+status save nahi karta. workflow.risk_gate_node() us result ko integrate karta hai.
+
+ONE EDGE CASE
+Current code uses float(confidence or 1.0), so exact 0.0 becomes 1.0 there.
+Isliye zero confidence hamesha penalize hoti hai, aisa claim mat karna.
+
+VIVA LINE
+"compute_risk findings ko weighted score aur review route mein convert karta
+hai; hard blocks score low hone par bhi human review force kar sakte hain."

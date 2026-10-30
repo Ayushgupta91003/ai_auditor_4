@@ -1,0 +1,289 @@
+AI INVOICE AUDITOR - COMPLETE FIVE-SLIDE PRESENTATION SCRIPT
+===========================================================
+
+MATCHES THE CURRENT TEX
+1. Welcome
+2. Infrastructure & Architecture (clean six-service diagram)
+3. Challenges Faced (four challenge/approach rows)
+4. Beyond Scope - Human-in-the-Loop Review (retained reference slide)
+5. Thank You
+
+Scope: current Anshuman/AI Invoice Auditor source, compared with the old spec.
+The spoken paragraphs below are ready-to-speak English. Hinglish memory cues,
+handover instructions and examiner notes are not meant to be read word for word.
+Proposed speaking allocation, not an assertion of historical code authorship:
+Anshuman: ADK/A2A; Aman: MCP; Ayush: RAI/risk gate; Param: Langfuse/review loop.
+Plan roughly 10-12 minutes with pauses. Rehearse once and shorten if needed.
+
+IMPORTANT BEFORE YOU START
+The current slide 4 was preserved exactly at your request, so it retains some
+over-strong reference wording. Speak the accurate version given below:
+- Human review existed in the old spec; actual revalidation was optional-marked.
+- Actual revalidation: validator -> reporter -> compute_risk, then pending_review.
+- Feedback logs changes, but current extracted fields/report files are updated.
+- Rejecting a pending new invoice is not automatic removal of old indexed vectors.
+Do not announce immutable full version history, universal privacy, official
+protocol conformance, or live Bedrock success unless you have demonstrated it.
+No application code or TeX was changed while creating this script and viva PDF.
+
+==========================================================================
+SLIDE 1 - WELCOME
+Speaker: Anshuman | Target: 45-60 seconds
+==========================================================================
+
+Good morning everyone. We are Group 11, and our project is the AI Invoice
+Auditor: a containerized system for processing multilingual invoices,
+validating them against ERP reference data and supporting an auditor's review.
+
+The original project already included document extraction, translation,
+validation, reporting, RAG and a six-service deployment. Our current work adds
+four agentic layers: Google ADK with A2A delegation, MCP-based tool discovery,
+Responsible AI guardrails and Langfuse observability.
+
+Our explanation is divided into four parts. I will cover ADK and A2A. Aman will
+explain the MCP tool layer. Ayush will cover Responsible AI and the risk gate.
+Param will explain tracing and the review-extension workflow.
+
+We will first show where these layers fit, then discuss the design challenges
+and how the current implementation addresses them.
+
+HINGLISH MEMORY CUE
+Purana baseline repeat nahi karna as innovation. Four additions clear bolna:
+framework delegation, discoverable tools, safety boundaries, execution visibility.
+
+==========================================================================
+SLIDE 2 - INFRASTRUCTURE & ARCHITECTURE
+Four speakers | Target: about 3-4 minutes total
+==========================================================================
+
+ANSHUMAN - POINT TO STREAMLIT AND THE CENTRAL AGENT BOX
+
+This diagram shows the same six physical services as the baseline. Streamlit
+is the auditor-facing interface. It calls the agent service over HTTP.
+The agent contains our LangGraph workflow and the added agentic layers.
+
+LangGraph coordinates processing stages. Translation and business-validation
+capabilities are also exposed through Google ADK agents. A2A provides the
+message-and-task boundary for delegating those skills. This lets us separate
+workflow coordination from a particular agent's implementation.
+
+These are logical roles inside the agent service; they are not separate Docker
+containers. In the default configuration, the custom A2A transport dispatches
+in-process. HTTP transport is configurable. We inspect the actual executor
+because a deterministic fallback can run when ADK or the model is unavailable.
+
+HANDOVER: Aman will explain how those agents access shared tools.
+
+AMAN - POINT TO 'A2A DELEGATION + MCP TOOLS' INSIDE AGENT
+
+MCP is our tool boundary. A tool declares its name, description and input-schema
+metadata in a registry. Clients discover available tools through tools/list
+and invoke them through tools/call.
+
+For example, an ADK translation agent can call lang_bridge through this shared
+boundary. RAG roles similarly call retrieval, ranking, generation and evaluation
+tools. The client receives a structured result or a consistently shaped error.
+
+This separates a capability's implementation from the framework using it.
+The current source declares thirteen tools, including two helper capabilities.
+Some ordinary graph nodes still call functions directly, so we do not claim
+that every single operation must pass through MCP.
+
+HANDOVER: Ayush will explain the reference and storage paths.
+
+AYUSH - POINT TO MOCK ERP AND THE THREE STORES
+
+The agent's normal ERP lookup path calls the mock ERP service over HTTP.
+Mock ERP reads its approved vendor, purchase-order and item records from the
+ERP schema in PostgreSQL. Audit evidence and workflow checkpoints are stored
+separately in the same database.
+
+Qdrant stores the derived evidence vectors used by RAG. Redis caches
+recomputable responses. PostgreSQL is the principal audit store, Qdrant is
+rebuildable, and Redis is not the authority for business decisions.
+
+Our RAI controls sit around selected document, query and answer boundaries.
+The additional risk policy decides whether a fresh audit can be indexed
+automatically or should wait for human review.
+
+HANDOVER: Param will explain how we observe these paths.
+
+PARAM - POINT TO THE ADDED-LAYERS CAPTION
+
+Langfuse provides visibility into logical audit and question runs. A run can
+contain nested spans for delegation, tool invocation, retrieval and reflection.
+This helps us distinguish a clean execution from an error or a fallback path.
+
+Langfuse is an external configured backend, so the local deployment remains
+six services. Cloud tracing must be verified with an actual exported trace;
+the application can otherwise degrade to structured logs.
+
+The key architectural change is therefore inside the agent: it can delegate
+capabilities, discover tools, inspect trust boundaries and expose execution
+evidence, while retaining the original service and storage structure.
+
+HINGLISH MEMORY CUE
+Six services != seven agent cards != thirteen tools. Ye different abstractions
+hain. Diagram ke arrows ko left-to-right, phir top-to-bottom explain karo.
+
+==========================================================================
+SLIDE 3 - CHALLENGES FACED: WHAT WAS THE PROBLEM, HOW WAS IT ADDRESSED?
+One row per member | Target: about 3 minutes total
+==========================================================================
+
+ROW 1 - CROSS-FRAMEWORK COORDINATION | ANSHUMAN
+
+The first design challenge was coordinating agents implemented with different
+frameworks. Directly coupling LangGraph to every ADK implementation would make
+the workflow harder to change and inspect.
+
+We addressed this with named skills and A2A message/task envelopes. The caller
+delegates a translation or validation skill and consumes structured task data.
+The ADK runner can use tools, while the returned executor identifies whether
+the ADK path or a deterministic fallback actually ran.
+
+For verification, we show the agent card, the requested skill and the returned
+task/executor. Merely listing an agent is not proof that a live model turn ran.
+
+ROW 2 - CONSISTENT TOOL ACCESS | AMAN
+
+The second challenge was giving different agents a consistent way to access
+capabilities. Separate direct integrations would duplicate call conventions
+and error handling.
+
+We addressed this through the MCP registry and client. Tools publish names,
+descriptions and schema metadata, and agents invoke them through the same
+tools/list and tools/call interface. Result and error shaping are centralized.
+
+To demonstrate it, we list the tools and trace one call from the client through
+the dispatcher and registry to the handler. Schema metadata describes the
+contract; it does not by itself prove complete runtime validation or security.
+
+ROW 3 - UNSAFE INPUT AND LIMITED VISIBILITY | AYUSH, THEN PARAM
+
+AYUSH:
+The third challenge was that invoice text and user queries are untrusted input.
+A document may contain an instruction to ignore validation or approve a bill.
+An answer can also expose sensitive information or make unsupported claims.
+
+We added configurable RAI checks at relevant boundaries. Document instructions
+are treated as data, query overrides can be blocked, supported secrets and PII
+can be stripped, and insufficiently grounded answers can be replaced by a
+refusal. These controls reduce specific risks; they are not perfect protection.
+
+PARAM:
+We also needed to know which path produced the output. Langfuse traces and
+nested spans make delegation, tool errors and fallbacks easier to inspect.
+We verify a test trace first and then a real workflow trace. A synthetic
+connectivity observation is not evidence of a live Bedrock generation.
+
+ROW 4 - PREMATURE KNOWLEDGE INDEXING | AYUSH, THEN PARAM
+
+AYUSH:
+The fourth challenge was deciding when an audit result should become searchable
+knowledge. If a fresh questionable result is indexed immediately, later answers
+may rely on evidence that has not been reviewed.
+
+We inserted a risk gate after reporting in the normal processing path. A
+low-risk auto-approved invoice proceeds to indexing. A pending-review invoice
+stops for a human decision. The score is a configurable weighted rule score,
+not a fraud probability.
+
+PARAM:
+The reviewer can inspect and correct a pending record, revalidate it and then
+explicitly approve or reject. We demonstrate the review status, risk reasons
+and indexing outcome. This is a normal-workflow policy, not universal index
+revocation or a complete authorization system.
+
+HINGLISH SUMMARY OF ALL FOUR RESOLUTIONS
+Framework mismatch -> A2A skill/task boundary.
+Different tool access -> MCP discovery plus common invocation/error shape.
+Unsafe/opaque outputs -> RAI scans plus observable traces/fallback evidence.
+Unreviewed knowledge -> risk gate plus explicit reviewer decision.
+
+DO NOT INVENT HISTORY
+Call these design challenges and approaches visible in code. Do not say
+'we measured a 40% improvement' or 'we fixed every leak' without actual evidence.
+
+==========================================================================
+SLIDE 4 - BEYOND SCOPE: HUMAN-IN-THE-LOOP REVIEW
+Ayush introduces, Param walks the flow | Target: 2 minutes
+==========================================================================
+
+AYUSH:
+The old specification already described a human-review dashboard. However,
+revalidation was marked as not mandatory to implement. Our extension makes
+the review interaction concrete and connects it to the indexing policy.
+
+After a new audit is reported, the risk gate decides between automatic
+indexing and pending review. Risk combines discrepancy severity and configured
+rules. Cases needing attention are displayed in the review queue.
+
+PARAM:
+The reviewer opens a pending invoice, examines the source and findings, and
+can edit allowed header fields or line items. Revalidate with Edits reconstructs
+the current state and applies those changes.
+
+In the actual endpoint, the order is validator, then reporter, then risk
+recalculation. The invoice remains pending_review so the reviewer still makes
+an explicit final decision. This is the implementation order to remember.
+
+Approve and Index requests evidence indexing and records approval. Reject
+records rejection. A separate feedback-only form records a suggestion without
+automatically applying or revalidating it.
+
+Changes and reviewer decisions are recorded in human_feedback. We should
+qualify the history claim: current structured data and named report files can
+be updated, so this is not complete immutable report-version storage. Also,
+rejecting a record does not automatically revoke all previously indexed vectors.
+
+The benefit is a visible human decision boundary: the auditor can inspect,
+correct, recheck and decide rather than treating an automated recommendation
+as payment authorization.
+
+PRESENTER-ONLY NOTE ABOUT THE RETAINED SLIDE
+Its printed order and 'original never overwritten' wording were retained from
+the supplied reference. Use the actual code explanation above when asked.
+If permitted to edit later, align those labels with the implementation. Do not
+pretend the code follows an inaccurate label simply to match the picture.
+
+==========================================================================
+SLIDE 5 - THANK YOU
+Speaker: Anshuman | Target: 20-30 seconds
+==========================================================================
+
+To conclude, we retained the original invoice-auditing foundation and added
+four layers: cross-framework delegation, discoverable tools, Responsible AI
+controls and execution observability. The review extension adds a practical
+human decision boundary before normal pending-case indexing.
+
+Thank you. We are ready to explain the architecture, demonstrate the execution
+path and answer your questions.
+
+==========================================================================
+IF ASKED TO DEMONSTRATE: FIVE-MINUTE RUN ORDER
+==========================================================================
+1. Show six-service status and actual model/backend modes. Do not show .env.
+2. Anshuman: /agents and a translation card; show task/executor evidence.
+3. Aman: /mcp/tools; show one non-destructive tool call/result or prepared trace.
+4. Ayush: normal scoped question, instruction-override refusal and risk reasons.
+5. Param: nested real trace, pending record edit/revalidate and explicit decision.
+
+Use test data. If a fallback or quota error occurs, explain it and show its
+evidence. Do not hide it behind a green UI status or repeatedly upload duplicates.
+
+RAPID CHALLENGE ANSWERS - ONE SENTENCE EACH
+Framework coordination: named A2A skills return framework-neutral task data.
+Tool consistency: MCP registry/discovery provides a common invocation contract.
+Safety: actual RAI scan calls inspect selected untrusted input/output paths.
+Debugging: Langfuse spans expose the path, timing and failures when exported.
+Index quality: the normal risk gate holds pending cases for reviewer approval.
+Audit accountability: feedback records explain edits; humans own final decisions.
+
+FINAL REHEARSAL CHECKLIST
+[ ] Everyone speaks their own contribution and hands over by name.
+[ ] We distinguish an addition from something already in the old baseline.
+[ ] We can show actual execution mode, not just installed packages/cards.
+[ ] We do not claim full immutable history, perfect RAI or universal revocation.
+[ ] We can explain the current-code order even if the retained slide differs.
+[ ] We keep credentials and real private invoice data off shared screens.

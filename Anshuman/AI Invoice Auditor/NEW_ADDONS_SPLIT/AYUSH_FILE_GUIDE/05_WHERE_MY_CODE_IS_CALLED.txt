@@ -1,0 +1,50 @@
+MY FUNCTIONS ARE ACTUALLY USED HERE - CONNECTION MAP
+====================================================
+In files ko full-depth padhna required nahi. Apne call sites recognize karo.
+Line numbers current source ke hain; edits ke baad move ho sakte hain.
+
+1. INVOICE TOOL INPUT
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\tools\invoice_tools.py
+data_harvester(): extracted document text ko scan_document() deta hai [line 148].
+lang_bridge(): translation se pehle scan_document() [line 184].
+insight_reporter(): report wrapper scan_report() use karta hai [line 503].
+Note: ordinary graph ke direct nodes aur MCP wrappers alag paths ho sakte hain.
+Har possible extraction path same wrapper se guzarta hai, yeh claim mat karna.
+
+2. USER QUESTION ENTRY
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\rag\pipeline.py
+query_rag_with_triad(): query par scan_user_query() [line 113].
+Blocked result aaye toh retrieval se pehle refusal return ho sakta hai.
+
+3. GENERATED ANSWER
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\tools\rag_tools.py
+response_synthesizer(): model/cache answer par scan_answer() [line 276].
+
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\rag\agents.py
+finalize(): final selected answer par scan_answer() [line 292].
+Repeated output checks ka matlab perfect detection guarantee nahi.
+
+4. HUMAN EDITS KE BAAD RISK
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\main.py
+revalidate_invoice(): edits apply -> validator -> reporter -> compute_risk()
+[current risk call line 414]. Phir explicit pending_review status set hota hai.
+approve_invoice(): indexing request + approved status/decision.
+reject_invoice(): rejected status/decision; old vectors automatically remove nahi.
+
+5. YAML SETTINGS LOADER - SUPPORT FILE
+Source: D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\config_loader.py
+get_rules_path(): RULES_PATH override ya default rules.yaml location.
+get_prompts_path(): PROMPTS_PATH override ya default prompts.yaml location.
+load_rules(force_reload=False): YAML rules read/cache; optional forced reload.
+load_prompts(force_reload=False): prompt YAML read/cache.
+Note: loader ka force_reload guardrails object ke separate cache ko necessarily
+clear nahi karta.
+
+ONE COMPLETE STORY
+Question -> scan_user_query -> RAG generation -> scan_answer -> final answer.
+Invoice -> validation/report -> compute_risk -> risk_gate_node -> conditional
+indexing or human review.
+
+STUDY PRIORITY
+Pehle guardrails ke 3 scan methods, phir compute_risk, phir risk_gate_node aur
+_route_after_gate. Remaining helpers sirf in functions ko support/connect karte hain.

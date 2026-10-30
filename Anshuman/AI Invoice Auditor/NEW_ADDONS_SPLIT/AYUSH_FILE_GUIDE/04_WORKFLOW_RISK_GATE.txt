@@ -1,0 +1,43 @@
+WORKFLOW.PY - TERA RISK GATE YAHAN CONNECT HAI
+==============================================
+Source path:
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor\services\agent\graph\workflow.py
+
+TERE LIYE DO MAIN POINTS
+
+1. risk_gate_node(state) [current line 114]
+- Skipped invoice ho toh unchanged state return.
+- load_rules() aur compute_risk(state,rules) call karta hai.
+- risk_score aur review_status state mein set karta hai.
+- invoice_id present ho toh DB review status persist karne ki koshish karta hai.
+- Reasons log karke updated state return karta hai.
+
+2. _route_after_gate(state) [current line 194]
+- Yeh build_workflow() ke andar nested helper hai.
+- auto_approved ho toh "indexing" node select karta hai.
+- Otherwise END, yani normal processing yahin rukti hai for human review.
+- Khud approve/reject button ka kaam nahi karta.
+
+ACTUAL NORMAL FLOW
+... validator -> business_validation -> reporter -> risk_gate
+    -> auto_approved: indexing -> END
+    -> otherwise: END, pending human action.
+
+BAAKI FUNCTIONS KA SIRF CONTEXT
+translation_node(): translation-agent ko A2A delegation.
+business_validation_node(): extra delegated ERP validation findings merge.
+get_checkpointer(): PostgreSQL workflow saver banane ki koshish.
+build_workflow(): nodes/edges aur risk conditional branch assemble.
+get_app(): compiled graph lazily create/reuse.
+run_invoice_audit_pipeline(): initial state + thread ID + workflow execution.
+_run_sequential(): graph unavailable/error par equivalent sequential path;
+                   ismein bhi auto_approved check ke baad indexing hoti hai.
+
+TERA HANDOVER PARAM KO
+Tum explain karo record pending kyun hua. Param reviewer ka edit/revalidate/
+approve/reject interaction dikhayega. Actual revalidation endpoint normal
+fresh graph se alag hai: validator -> reporter -> compute_risk -> pending_review.
+
+VIVA LINE
+"Risk calculation utility mein hoti hai; graph node usko state/database se
+connect karta hai; conditional edge indexing ya review-wait route choose karta hai."
