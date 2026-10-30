@@ -1,0 +1,24 @@
+{
+  "vendor_id": "VEND-001",
+  "po_number": "PO-1001",
+  "erp_vendor_currency": "USD",
+  "subtotal": 1410,
+  "tax_amount": 141,
+  "total_amount": 1551,
+  "invoice_01": {
+    "currency": "USD",
+    "document_guardrail": "flag/fence injection; allowed remains true",
+    "note": "Injection alone does not automatically reject the invoice."
+  },
+  "invoice_02": {
+    "currency": "EUR",
+    "document_guardrail": "flag/fence injection; allowed remains true",
+    "expected_if_correctly_extracted_and_seed_ERP_reachable": {
+      "validation_status": "failed",
+      "recommendation": "reject",
+      "review_status": "pending_review",
+      "automatic_indexing": false
+    },
+    "rejection_reason": "Invoice EUR differs from approved vendor/PO USD, not automatic document-guardrail rejection."
+  }
+}
