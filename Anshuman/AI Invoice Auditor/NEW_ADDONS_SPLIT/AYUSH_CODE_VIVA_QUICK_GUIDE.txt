@@ -1,0 +1,279 @@
+AYUSH - BASELINE MOCK ERP + VALIDATION: CODE VIVA QUICK GUIDE
+===========================================================
+Read sections 1-4 first if you have only five minutes.
+This guide explains CURRENT selected Anshuman code for your baseline speaking
+part. Last month's exact source checkout was not verified. Do not claim this
+proves who originally wrote each function. No application code changed here.
+
+PROJECT ROOT
+D:\06_All_Coding_Related_Stuff\07_Infosys\04_FA_4\01_Project\Anshuman\AI Invoice Auditor
+All paths below are relative to this root. Line numbers match inspected source.
+
+1. MERA PURANA PART KYA HAI? (30 SECONDS)
+----------------------------------------
+"Mera baseline part Mock ERP reference service aur usse connected business
+validation layer hai. Invoice ke billed values ko approved PO, vendor aur SKU
+records se compare karte hain. Differences ko structured discrepancies ke form
+mein report aur audit database mein store kiya jaata hai."
+
+Invoice = supplier kya charge kar raha hai.
+ERP = company ne kya approve kiya tha.
+PO = purchase order. SKU = unique item code. Mock = simulated enterprise service.
+OCR/translation previous stages hain; validator structured invoice receive karta hai.
+
+2. SIR CODE DIKHAO BOLE TOH - YE FILES IS ORDER MEIN KHOLO
+---------------------------------------------------------
+1) services/mock_erp/main.py:66   -> PO API route and missing-record handling.
+2) services/mock_erp/db.py:67     -> PO database lookup + line items + fallback.
+3) services/agent/graph/nodes/validator.py:112 -> invoice vs ERP comparison.
+4) config/rules.yaml             -> price 5%, quantity 0%, required fields.
+5) services/agent/graph/nodes/reporter.py:143 -> verdict/report/persistence.
+6) database/init.sql:19          -> ERP and audit table relationships.
+
+Minimum demo: main.py route -> db.py SQL -> validator.py comparison.
+Longer guide: AYUSH_BASELINE_MOCK_ERP_EXPLAINED_HINGLISH.txt in this same folder.
+
+3. FULL FLOW EK EXAMPLE KE SAATH
+--------------------------------
+Parsed invoice: PO-1001, VEND-001, currency USD, SKU-001 qty 50, price 15.
+       |
+run_data_validation() -> mandatory fields / currency / total arithmetic
+       |
+run_business_validation() -> GET /po/PO-1001
+       |                  -> GET /vendor/VEND-001
+       |                  -> GET /sku/SKU-001
+       |
+ERP says SKU-001: qty 50, price 12 USD.
+       |
+price deviation = abs(15-12)/12 * 100 = 25%.
+       |
+Graph validator adds ERROR discrepancy (greater than 10% price deviation).
+       |
+reporter -> failed + manual_review for this price-only example
+       |
+audit DB persists header, items, findings; HTML/JSON summarise result.
+       |
+New risk extension can route ERROR invoice to pending human review.
+
+Assumption: other fields/arithmetic valid; additional delegated checks can add findings.
+Har ERROR ka recommendation reject nahi hota. Currency mismatch/missing header
+reporter ke particular reject conditions hain.
+
+4. THREE CODE SNIPPETS - BOLKE EXPLAIN KARO
+-------------------------------------------
+A) API - services/mock_erp/main.py:66
+
+    @app.get("/po/{po_number}", response_model=PurchaseOrderResponse)
+    def get_purchase_order(po_number: str):
+        ...
+        po = erp_db.get_po(po_number)
+        if not po:
+            raise HTTPException(...)
+        return po
+
+Ellipses omit logging/error arguments; this is an explanation excerpt.
+Bolna: "GET request ka PO number function ko milta hai. Data-access layer se
+record fetch hota hai. Missing record par 404; valid record structured JSON mein.
+Pydantic response_model expected output shape define karta hai."
+
+B) SQL - services/mock_erp/db.py:77 onward
+
+    cur.execute(
+        "SELECT po_number, vendor_id, created_at FROM erp.purchase_orders WHERE UPPER(po_number) = %s;",
+        (po_number,)
+    )
+
+Bolna: "Parameterized SQL hai. PO value string concatenate karke SQL mein nahi
+daalte; driver ko separate parameter dete hain. Header ke baad po_line_items
+query se approved item quantities/prices fetch hote hain."
+%s placeholder hai, Python string formatting operation yahan nahi ho raha.
+(po_number,) single-value tuple hai. fetchone() one row, fetchall() multiple rows.
+
+C) Price comparison - validator.py:223
+
+    price_diff_pct = abs(inv_price - erp_price) / erp_price * 100.0
+    if price_diff_pct > price_tol_pct:
+        discrepancies.append({
+            "field_name": f"unit_price_{sku}",
+            "invoice_value": f"{inv_price:.2f}",
+            "erp_value": f"{erp_price:.2f}",
+            "deviation_pct": round(price_diff_pct, 2),
+            "severity": "WARNING" if price_diff_pct <= 10 else "ERROR"
+        })
+
+Bolna: "Deviation absolute difference as percentage hai. Configured threshold
+cross ho toh finding append hoti hai. Dono values store karne se reviewer
+actual mismatch explain kar sakta hai. Yeh graph path ka severity rule hai."
+Outer code checks erp_price > 0 before division. Zero-reference cases are limited.
+
+5. FUNCTION CHEAT SHEET
+-----------------------
+services/mock_erp/main.py
+  health_check():59        status + active backend.
+  get_purchase_order():67  PO header/lines, missing -> 404.
+  get_vendor():78          vendor name/currency/country.
+  get_sku():89             SKU category/uom/gst_rate.
+  POLineItem/PurchaseOrderResponse/VendorResponse/SKUResponse = response schemas.
+  app = FastAPI(...) creates web application; decorator maps URL to function.
+
+services/mock_erp/db.py - ERPDatabase
+  __init__():19             initial setup.
+  _init_connection():25     JSON load + PostgreSQL connection/pool attempt.
+  _load_fallback_data():44  JSON files -> dictionaries keyed by IDs.
+  get_po():67              header + lines, ID normalize, SQL/fallback.
+  get_vendor():116         vendor reference lookup.
+  get_sku():144            item master lookup.
+  pool.getconn()/putconn() borrow/return connection; finally returns it on errors too.
+  conn.cursor() provides query interface. Context manager closes cursor.
+
+services/agent/graph/nodes/validator.py
+  _resolve_vendor_id():20     existing vendor ID or name-based JSON lookup attempt.
+  run_data_validation():46   required fields/currency/items/overall arithmetic.
+  run_business_validation():112  HTTP PO/vendor/SKU + tolerance comparisons.
+  validator_node():339       loads rules and combines validation into workflow state.
+  httpx.Client(... timeout=5.0): synchronous HTTP client with configured base URL.
+  client.get(...): calls ERP service; .json(): response body -> Python data.
+
+Important correction for code viva: current run_data_validation requires a
+line_total field, but its arithmetic loop sums quantity * unit_price, adds tax,
+and compares the overall invoice total. It does NOT independently compare each
+stated line_total against quantity * unit_price in this function.
+Overall mismatch is flagged when both percentage >5% and absolute difference >1.
+Do not claim every YAML type/tax rule is universally enforced by this function.
+
+services/agent/graph/nodes/reporter.py
+  generate_html_report():24  invoice/findings -> human-readable HTML.
+  reporter_node():143        status/recommendation, report files, DB write calls.
+  :241-243 insert_invoice_audit, insert_line_items, insert_discrepancies.
+
+services/agent/utils/db.py - AuditDatabase
+  is_checksum_audited():205    duplicate-file lookup.
+  insert_invoice_audit():225   insert/upsert current invoice.
+  insert_line_items():305      store/replace nonempty current items.
+  insert_discrepancies():351   store/replace nonempty findings.
+  insert_human_feedback():398  feedback record.
+  list_invoices():428          dashboard list.
+  get_invoice_details():462    selected audit details.
+  update_review_status():519   new risk/review status persistence.
+  record_review_decision():571 reviewer decision record.
+  record_correction():604      correction entry.
+
+database/seed_erp.py
+  load_json():18       reads JSON reference file.
+  seed_postgres():25   loads/upserts master records into PostgreSQL.
+  Seeding is initial reference-data population; not invoice extraction.
+
+6. TABLES - SIR RELATIONSHIP PUCHHE TOH
+---------------------------------------
+ERP schema:
+  vendors -> approved vendor details.
+  sku_master -> recognised items.
+  purchase_orders -> PO header, vendor_id references vendors.
+  po_line_items -> PO items, po_number references PO, item_code references SKU.
+
+Audit schema:
+  invoice_audit -> invoice header/text/status/checksum/current extraction.
+  invoice_line_items -> invoice_id references invoice_audit.
+  discrepancies -> findings linked by invoice_id.
+  human_feedback -> correction/review entries linked by invoice_id.
+
+Primary key identifies row. Foreign key links valid related records.
+UNIQUE file_checksum prevents multiple current rows for identical file bytes.
+Upsert means insert new or update matching existing key; not a historical snapshot.
+Raw text/JSONB extraction and structured numeric columns have different purposes.
+Database NUMERIC doesn't mean calculations in Python are Decimal; here float used.
+
+7. CONFIG + BUSINESS CASES (QUICK VIVA)
+---------------------------------------
+Price tolerance: 5%, condition strictly > tolerance in graph comparison.
+  ERP 100, invoice 105: at threshold; no price finding from that condition.
+  ERP 100, invoice 110: 10% deviation -> WARNING in this graph function.
+  ERP 100, invoice 120: 20% deviation -> ERROR in this graph function.
+Quantity tolerance: 0%; any nonzero deviation for positive ERP qty -> ERROR.
+PO missing/unrecognised: CRITICAL.
+Vendor ID mismatch: ERROR if invoice vendor ID supplied and differs from PO.
+Currency mismatch with vendor reference: ERROR.
+Unknown master SKU: WARNING; item absent from PO: ERROR.
+
+Do not predict final workflow solely from these examples: delegated MCP business
+validation can add differently named/severity findings. These are graph examples.
+
+8. REPORT RESULT - THREE WORDS ALAG HAIN
+----------------------------------------
+validation_status:
+  no findings/data errors -> passed;
+  only lower-severity findings -> partial;
+  ERROR/CRITICAL or data errors -> failed.
+recommendation:
+  passed + confidence >=0.95 -> approve;
+  failed + field_name currency OR missing mandatory header -> reject;
+  otherwise -> manual_review.
+review_status:
+  new risk gate/reviewer decides auto_approved, pending_review, approved, rejected.
+These are not interchangeable. Automatic recommendation is not payment authority.
+
+9. CURRENT LIMITATIONS - HONEST ANSWERS
+---------------------------------------
+Normal ERP lookups HTTP, but graph validator has direct ERPDatabase exception
+fallback. Don't say every path is HTTP-only.
+Mock ERP PostgreSQL unavailable -> JSON fallback; inspect health.backend.
+ADK business validation is additional route after regular validator, not its replacement.
+Current audit data is upserted and reports can be overwritten. Feedback records
+exist; do not claim full immutable report/extraction-version history.
+Empty items/findings lists have early returns in DB helpers; stale-row clearing
+is not universally guaranteed.
+Code is course demo reference validation, not a production fraud detection model.
+
+10. FAST DEMO PLAN (READ ONLY)
+------------------------------
+On the running lab Docker host:
+  Open http://localhost:8001/docs (if port is mapped as configured).
+  GET /health -> check backend.
+  GET /po/PO-1001 -> see SKU-001 qty50 price12 and other lines.
+  GET /vendor/VEND-001 -> Global Logistics Ltd, currency USD.
+  GET /sku/SKU-001 -> item master.
+  GET /po/PO-NOT-FOUND -> show 404.
+Then show validator comparison and a saved discrepancy in invoice dashboard.
+Port 8000 inside mock-erp container differs from host mapped 8001.
+Existing guardrail demo includes an EUR/USD mismatch invoice; process synthetic
+data only if needed. This guide itself did not run a live end-to-end audit.
+
+11. 90-SECOND SCRIPT
+--------------------
+"Sir, mera baseline scope Mock ERP aur business validation hai. Invoice mein
+supplier ke billed values aate hain. ERP service approved purchase order, vendor
+aur SKU reference deti hai. Humne FastAPI endpoints se yeh reference expose kiya.
+
+API ka main.py request handle karta hai, db.py PostgreSQL se actual records
+fetch karta hai. Local demo ke liye JSON fallback bhi available hai.
+
+Validator pehle required fields aur overall arithmetic check karta hai. Phir
+PO, vendor aur item references HTTP se fetch karke price, quantity aur currency
+compare karta hai. Price tolerance five percent aur quantity tolerance zero hai.
+
+For example, approved price twelve aur billed fifteen hai, toh twenty-five
+percent deviation niklega. Finding mein invoice value, ERP value, deviation
+aur severity store hoti hai. Reporter status aur recommendation banata hai,
+HTML/JSON outputs aur audit database mein result persist hota hai.
+
+ERP tables approved facts rakhti hain; audit tables invoice evidence aur findings.
+Naye version mein in findings ke upar risk gate aur Responsible AI layer hai.
+Human review status aur system recommendation alag concepts hain."
+
+12. RAPID QUESTIONS
+--------------------
+Why Mock ERP? -> controlled enterprise reference without real SAP/Oracle access.
+Why not LLM comparison alone? -> approved facts and numerical rules authoritative hain.
+Why API? -> reference-service boundary; callers need response contract, not SQL schema.
+Why Pydantic? -> expected request/response data structure and type validation.
+Why parameterized SQL? -> user-supplied values SQL text se separate bind hote hain.
+Why JSON fallback? -> local demo continuity, but active backend disclose karna hai.
+Why discrepancies? -> explainable field-level actual vs expected result.
+Why separate audit schema? -> evidence/results and approved master data have distinct roles.
+Is mismatch fraud? -> not necessarily; wrong extraction, billing error or genuine change possible.
+Is A2A ERP HTTP? -> no. A2A delegates agent work; tool uses HTTP to reach Mock ERP.
+Is RAI same as ERP rejection? -> no. RAI guards trust boundaries; ERP validation checks business facts.
+
+LAST LINE TO REMEMBER
+"ERP approved truth deta hai; validator difference nikalta hai; reporter explain
+karta hai; audit DB evidence rakhti hai; new risk gate review route karta hai."
